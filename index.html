@@ -326,6 +326,56 @@ textarea { resize: vertical; min-height: 80px; }
 #confirm-title { margin: 0 0 8px; font-size: 17px; }
 #confirm-message { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
 
+/* ── Codes view ──────────────────────────────────────── */
+.codes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 0 20px 20px;
+}
+.code-tile {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px;
+  cursor: pointer; transition: border-color 0.15s;
+  user-select: none;
+}
+.code-tile:hover { border-color: var(--accent-2); }
+.code-tile.pinned { border-color: var(--accent); }
+.code-tile.copied { border-color: var(--ok); animation: tile-flash 0.4s ease; }
+@keyframes tile-flash {
+  0%,100% { background: var(--panel); }
+  40% { background: rgba(107,220,142,0.15); }
+}
+.code-tile-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.code-tile-meta { flex: 1; min-width: 0; }
+.code-label-text { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-issuer-text { font-size: 11px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-pin-btn {
+  background: none; border: none; font-size: 13px;
+  color: var(--muted); padding: 0 0 0 6px; line-height: 1; flex-shrink: 0;
+}
+.code-pin-btn:hover, .code-tile.pinned .code-pin-btn { color: var(--warn); }
+.code-main { display: flex; align-items: center; gap: 10px; }
+.code-value {
+  font-family: var(--mono); font-size: 22px; font-weight: 700;
+  letter-spacing: 3px; color: var(--accent); flex: 1;
+}
+.code-value.expiring { color: var(--danger); }
+.code-ring-wrap { flex-shrink: 0; }
+.code-ring-svg { transform: rotate(-90deg); display: block; }
+.code-ring-bg { fill: none; stroke: var(--border); stroke-width: 3; }
+.code-ring-fg { fill: none; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.9s linear, stroke 0.3s; }
+.code-next { font-size: 11px; color: var(--muted); margin-top: 6px; min-height: 16px; }
+.code-next strong { color: var(--warn); font-family: var(--mono); letter-spacing: 2px; }
+.copy-flash { animation: copy-flash 0.25s ease; }
+@keyframes copy-flash {
+  0%,100% { opacity: 1; } 50% { opacity: 0.4; }
+}
+
+@media (max-width: 520px) {
+  .codes-grid { padding: 0 14px 20px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
 /* Footer nav */
 .footer-nav {
   position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
@@ -486,6 +536,7 @@ textarea { resize: vertical; min-height: 80px; }
       <button class="filter-tab" data-type="login" onclick="setFilter('login')">Logins</button>
       <button class="filter-tab" data-type="card" onclick="setFilter('card')">Cards</button>
       <button class="filter-tab" data-type="note" onclick="setFilter('note')">Notes</button>
+      <button class="filter-tab" data-type="code" onclick="setFilter('code')">Codes</button>
     </div>
     <button class="btn btn-sm" onclick="openEntryModal(null)">＋ Add</button>
   </div>
@@ -495,6 +546,14 @@ textarea { resize: vertical; min-height: 80px; }
     <h3>No entries</h3>
     <p id="empty-msg">Add your first entry.</p>
     <button class="btn" onclick="openEntryModal(null)">＋ Add entry</button>
+  </div>
+  <div id="codes-view" style="display:none">
+    <div class="codes-grid" id="codes-grid"></div>
+    <div class="vault-empty" id="codes-empty" style="display:none">
+      <h3>No codes yet</h3>
+      <p>Add TOTP codes from any authenticator app.</p>
+      <button class="btn" onclick="openEntryModal(null);switchEntryTab('code')">＋ Add code</button>
+    </div>
   </div>
 
 </section>
@@ -508,6 +567,7 @@ textarea { resize: vertical; min-height: 80px; }
       <button class="entry-tab-btn active" data-type="login" onclick="switchEntryTab('login')">🔑 Login</button>
       <button class="entry-tab-btn" data-type="card" onclick="switchEntryTab('card')">💳 Card</button>
       <button class="entry-tab-btn" data-type="note" onclick="switchEntryTab('note')">📝 Note</button>
+      <button class="entry-tab-btn" data-type="code" onclick="switchEntryTab('code')">🔐 Code</button>
     </div>
 
     <!-- Login pane -->
@@ -552,6 +612,41 @@ textarea { resize: vertical; min-height: 80px; }
     <div id="entry-pane-note" class="tab-pane entry-form-pane" data-type="note">
       <div class="field"><label>Title*</label><input id="note-title" placeholder="e.g. WiFi credentials" autocomplete="off"></div>
       <div class="field"><label>Body</label><textarea id="note-body" rows="6"></textarea></div>
+    </div>
+
+    <!-- Code (TOTP) pane -->
+    <div id="entry-pane-code" class="tab-pane entry-form-pane" data-type="code">
+      <div class="field">
+        <label>otpauth:// URI <span style="color:var(--muted);font-weight:400">(optional — auto-fills fields)</span></label>
+        <input id="code-uri" placeholder="otpauth://totp/..." autocomplete="off" oninput="parseOtpUri(this.value)">
+      </div>
+      <div class="field"><label>Label*</label><input id="code-label" placeholder="e.g. GitHub" autocomplete="off"></div>
+      <div class="field">
+        <label>Secret (Base32)</label>
+        <div class="pw-wrap">
+          <input type="password" id="code-secret" placeholder="JBSWY3DPEHPK3PXP" autocomplete="off"
+            oninput="this.value=this.value.toUpperCase().replace(/[^A-Z2-7=]/g,'')">
+          <button class="pw-toggle" type="button" onclick="togglePw('code-secret',this)">👁</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div class="field" style="flex:1"><label>Account</label><input id="code-account" placeholder="user@example.com" autocomplete="off"></div>
+        <div class="field" style="flex:1"><label>Issuer</label><input id="code-issuer" placeholder="e.g. GitHub" autocomplete="off"></div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div class="field" style="flex:1">
+          <label>Algorithm</label>
+          <select id="code-algo"><option value="SHA-1">SHA-1</option><option value="SHA-256">SHA-256</option><option value="SHA-512">SHA-512</option></select>
+        </div>
+        <div class="field" style="flex:1">
+          <label>Digits</label>
+          <select id="code-digits"><option value="6">6</option><option value="7">7</option><option value="8">8</option></select>
+        </div>
+        <div class="field" style="flex:1">
+          <label>Period</label>
+          <select id="code-period"><option value="30">30s</option><option value="60">60s</option></select>
+        </div>
+      </div>
     </div>
 
     <hr class="sep">
@@ -664,6 +759,16 @@ textarea { resize: vertical; min-height: 80px; }
         <div class="fmt-name">Generic CSV</div>
         <div class="fmt-desc">Map columns manually</div>
       </button>
+      <button class="import-format-btn" data-fmt="otpauth" onclick="selectImportFmt(this)">
+        <div class="fmt-name">otpauth:// URIs</div>
+        <div class="fmt-desc">Paste one URI per line</div>
+      </button>
+    </div>
+
+    <!-- otpauth URI paste area -->
+    <div id="otpauth-paste-area" style="display:none;margin-bottom:14px">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 8px">Paste otpauth:// URIs, one per line:</p>
+      <textarea id="otpauth-paste" rows="5" placeholder="otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example" oninput="previewOtpauthPaste(this.value)"></textarea>
     </div>
 
     <!-- Generic CSV column mapper (shown only for generic) -->
@@ -676,7 +781,7 @@ textarea { resize: vertical; min-height: 80px; }
       <div class="csv-map-row"><label>Notes</label><select id="map-notes"></select></div>
     </div>
 
-    <div class="field">
+    <div class="field" id="import-file-field">
       <label>Select file</label>
       <input type="file" id="import-file" accept=".json,.csv,.tijori,.jsonl" onchange="handleImportFileChange(this.files[0])">
     </div>
@@ -841,6 +946,58 @@ function escHtml(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function $(id) { return document.getElementById(id); }
+
+// ══════════════════════════════════════════════════════════
+// TOTP ENGINE  (RFC 6238 / RFC 4226 — pure WebCrypto)
+// ══════════════════════════════════════════════════════════
+
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32Decode(s) {
+  s = s.toUpperCase().replace(/=+$/, '').replace(/[^A-Z2-7]/g, '');
+  let bits = 0, val = 0;
+  const out = [];
+  for (const c of s) {
+    val = (val << 5) | B32.indexOf(c);
+    bits += 5;
+    if (bits >= 8) { out.push((val >>> (bits - 8)) & 0xff); bits -= 8; }
+  }
+  return new Uint8Array(out);
+}
+
+async function totpNow(secret, { digits = 6, period = 30, algorithm = 'SHA-1', offset = 0 } = {}) {
+  const keyBytes = base32Decode(secret);
+  if (!keyBytes.length) throw new Error('Invalid TOTP secret.');
+  const T = Math.floor(Date.now() / 1000 / period) + offset;
+  const msg = new Uint8Array(8);
+  let t = T;
+  for (let i = 7; i >= 0; i--) { msg[i] = t & 0xff; t = Math.floor(t / 256); }
+  const key = await crypto.subtle.importKey('raw', keyBytes,
+    { name: 'HMAC', hash: algorithm }, false, ['sign']);
+  const hmac = new Uint8Array(await crypto.subtle.sign('HMAC', key, msg));
+  const off = hmac[hmac.length - 1] & 0x0f;
+  const code = ((hmac[off] & 0x7f) << 24 | hmac[off+1] << 16 | hmac[off+2] << 8 | hmac[off+3]) % (10 ** digits);
+  return String(code).padStart(digits, '0');
+}
+
+function parseOtpauthUri(uri) {
+  // otpauth://totp/label?secret=...&issuer=...&algorithm=...&digits=...&period=...
+  try {
+    const u = new URL(uri);
+    if (u.protocol !== 'otpauth:') return null;
+    const label = decodeURIComponent(u.pathname.slice(1));
+    const [issuerFromLabel, accountFromLabel] = label.includes(':')
+      ? label.split(':').map(s => s.trim()) : [null, label.trim()];
+    return {
+      label: issuerFromLabel || accountFromLabel,
+      account: accountFromLabel,
+      issuer: u.searchParams.get('issuer') || issuerFromLabel || '',
+      secret: (u.searchParams.get('secret') || '').toUpperCase(),
+      algorithm: (u.searchParams.get('algorithm') || 'SHA-1').toUpperCase().replace('SHA', 'SHA-'),
+      digits: parseInt(u.searchParams.get('digits') || '6', 10),
+      period: parseInt(u.searchParams.get('period') || '30', 10)
+    };
+  } catch { return null; }
+}
 
 // ══════════════════════════════════════════════════════════
 // CRYPTO
@@ -1177,6 +1334,7 @@ async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
 // ══════════════════════════════════════════════════════════
 
 function lock() {
+  stopCodesTicker();
   S.key = null; S.salt = null; S.entries = new Map();
   Object.values(S.clipTimers).forEach(t => clearTimeout(t));
   S.clipTimers = {};
@@ -1282,7 +1440,7 @@ function fillGenerated() {
 function fv(entry, key) { return entry?.fields?.[key]?.v ?? ''; }
 
 function entryIcon(type) {
-  return type === 'login' ? '🔑' : type === 'card' ? '💳' : '📝';
+  return type === 'login' ? '🔑' : type === 'card' ? '💳' : type === 'code' ? '🔐' : '📝';
 }
 
 function entrySubtitle(entry) {
@@ -1290,6 +1448,11 @@ function entrySubtitle(entry) {
   if (entry.type === 'card') {
     const n = fv(entry, 'number').replace(/\s/g, '');
     return n ? '•••• ' + n.slice(-4) : fv(entry, 'cardholder');
+  }
+  if (entry.type === 'code') {
+    const issuer = fv(entry, 'issuer');
+    const account = fv(entry, 'account');
+    return issuer && account ? `${issuer} · ${account}` : issuer || account || 'TOTP';
   }
   const body = fv(entry, 'body');
   return body.length > 60 ? body.slice(0, 60) + '…' : body;
@@ -1307,7 +1470,7 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = $('screen-' + name);
   if (el) el.classList.add('active');
-  if (name === 'vault') { renderTopbar(); renderEntryList(); resetIdleTimer(); }
+  if (name === 'vault') { renderTopbar(); renderEntryList(); resetIdleTimer(); startCodesTicker(); }
   if (name === 'unlock') setTimeout(() => $('unlock-pass')?.focus(), 60);
 }
 
@@ -1344,6 +1507,7 @@ function getFilteredEntries() {
   const q = S.searchQuery.toLowerCase();
   const out = [];
   for (const e of S.entries.values()) {
+    if (e.type === 'code') continue; // codes rendered in their own view
     if (S.filterType !== 'all' && e.type !== S.filterType) continue;
     if (q) {
       const hay = [
@@ -1363,6 +1527,7 @@ function getFilteredEntries() {
 }
 
 function renderEntryList() {
+  if (S.filterType === 'code') { renderCodesGrid(); return; }
   const entries = getFilteredEntries();
   const list = $('entry-list');
   const empty = $('vault-empty');
@@ -1406,7 +1571,19 @@ function setFilter(type) {
   S.filterType = type;
   document.querySelectorAll('.filter-tab').forEach(b =>
     b.classList.toggle('active', b.dataset.type === type));
-  renderEntryList();
+  const codesView = $('codes-view');
+  const entryList = $('entry-list');
+  const vaultEmpty = $('vault-empty');
+  if (type === 'code') {
+    if (entryList) entryList.style.display = 'none';
+    if (vaultEmpty) vaultEmpty.style.display = 'none';
+    if (codesView) codesView.style.display = '';
+    renderCodesGrid();
+  } else {
+    if (codesView) codesView.style.display = 'none';
+    if (entryList) entryList.style.display = '';
+    renderEntryList();
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1451,9 +1628,17 @@ function openEntryModal(id) {
       $('card-expiry').value = fv(entry, 'expiry');
       $('card-cvv').value = fv(entry, 'cvv');
       $('card-notes').value = fv(entry, 'notes');
-    } else {
+    } else if (type === 'note') {
       $('note-title').value = fv(entry, 'title');
       $('note-body').value = fv(entry, 'body');
+    } else if (type === 'code') {
+      $('code-label').value = fv(entry, 'label');
+      $('code-secret').value = fv(entry, 'secret');
+      $('code-account').value = fv(entry, 'account');
+      $('code-issuer').value = fv(entry, 'issuer');
+      const algo = $('code-algo'); if (algo) algo.value = fv(entry, 'algorithm') || 'SHA-1';
+      const dig = $('code-digits'); if (dig) dig.value = fv(entry, 'digits') || '6';
+      const per = $('code-period'); if (per) per.value = fv(entry, 'period') || '30';
     }
   }
 
@@ -1463,7 +1648,11 @@ function openEntryModal(id) {
 function clearEntryForm() {
   ['login-title','login-url','login-username','login-password','login-notes',
    'card-label','card-cardholder','card-number','card-expiry','card-cvv','card-notes',
-   'note-title','note-body'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+   'note-title','note-body',
+   'code-uri','code-label','code-secret','code-account','code-issuer'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  const algo = $('code-algo'); if (algo) algo.value = 'SHA-1';
+  const dig = $('code-digits'); if (dig) dig.value = '6';
+  const per = $('code-period'); if (per) per.value = '30';
   const pw = $('login-password');
   if (pw) pw.type = 'password';
   updateEntropyMeter('', 'login-entropy-bar', 'login-entropy-label');
@@ -1500,12 +1689,26 @@ async function saveEntry() {
       cvv: { v: $('card-cvv').value, ts },
       notes: { v: $('card-notes').value.trim(), ts }
     };
-  } else {
+  } else if (type === 'note') {
     const title = $('note-title').value.trim();
     if (!title) { toast('Title is required.', { error: true }); return; }
     fields = {
       title: { v: title, ts },
       body: { v: $('note-body').value, ts }
+    };
+  } else if (type === 'code') {
+    const label = $('code-label').value.trim();
+    if (!label) { toast('Label is required.', { error: true }); return; }
+    const secret = $('code-secret').value.trim();
+    if (!secret) { toast('TOTP secret is required.', { error: true }); return; }
+    fields = {
+      label: { v: label, ts },
+      secret: { v: secret, ts },
+      account: { v: $('code-account').value.trim(), ts },
+      issuer: { v: $('code-issuer').value.trim(), ts },
+      algorithm: { v: $('code-algo').value, ts },
+      digits: { v: $('code-digits').value, ts },
+      period: { v: $('code-period').value, ts }
     };
   }
 
@@ -1738,6 +1941,9 @@ function selectImportFmt(btn) {
   btn.classList.add('selected');
   _importFmt = btn.dataset.fmt;
   $('csv-mapper').style.display = _importFmt === 'generic' ? '' : 'none';
+  $('otpauth-paste-area').style.display = _importFmt === 'otpauth' ? '' : 'none';
+  const fileField = $('import-file-field'); if (fileField) fileField.style.display = _importFmt === 'otpauth' ? 'none' : '';
+  if (_importFmt === 'otpauth') { const ta = $('otpauth-paste'); if (ta) { ta.value = ''; } }
   _importParsed = null;
   $('import-preview').style.display = 'none';
 }
@@ -2074,6 +2280,202 @@ function getDefaultDeviceLabel() {
   if (/Mac/.test(ua)) return 'Mac';
   if (/Windows/.test(ua)) return 'Windows PC';
   return 'Browser';
+}
+
+// ══════════════════════════════════════════════════════════
+// CODES VIEW — grid, ticker, pin, otpauth
+// ══════════════════════════════════════════════════════════
+
+let _codesTicker = null;
+
+function getCodeEntries() {
+  const pinned = loadPins();
+  const codes = [...S.entries.values()].filter(e => e.type === 'code');
+  codes.sort((a, b) => {
+    const ap = pinned.has(a.id) ? 0 : 1;
+    const bp = pinned.has(b.id) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    return (fv(a,'label') || '').localeCompare(fv(b,'label') || '');
+  });
+  return codes;
+}
+
+function loadPins() {
+  try { return new Set(JSON.parse(localStorage.getItem('tijori.pins') || '[]')); } catch { return new Set(); }
+}
+function togglePin(id) {
+  const pins = loadPins();
+  pins.has(id) ? pins.delete(id) : pins.add(id);
+  localStorage.setItem('tijori.pins', JSON.stringify([...pins]));
+  renderCodesGrid();
+}
+
+const RING_R = 14, RING_C = 2 * Math.PI * RING_R;
+
+async function renderCodesGrid() {
+  const grid = $('codes-grid');
+  const empty = $('codes-empty');
+  if (!grid) return;
+  const codes = getCodeEntries();
+  if (!codes.length) {
+    grid.innerHTML = '';
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  const now = Date.now() / 1000;
+  const pins = loadPins();
+  const tiles = await Promise.all(codes.map(async e => {
+    const period = parseInt(fv(e,'period') || '30', 10);
+    const digits = parseInt(fv(e,'digits') || '6', 10);
+    const algorithm = fv(e,'algorithm') || 'SHA-1';
+    const secret = fv(e,'secret');
+    const elapsed = now % period;
+    const remaining = period - elapsed;
+    const progress = remaining / period;
+    const expiring = remaining <= 5;
+    const pinned = pins.has(e.id);
+
+    let current = '––––––', nextCode = '';
+    try {
+      current = await totpNow(secret, { digits, period, algorithm });
+      if (expiring) nextCode = await totpNow(secret, { digits, period, algorithm, offset: 1 });
+    } catch {}
+
+    const offset = RING_C * (1 - progress);
+    const stroke = expiring ? 'var(--danger)' : 'var(--accent)';
+    const label = escHtml(fv(e,'label') || '(no label)');
+    const issuer = fv(e,'issuer') || fv(e,'account');
+
+    return `<div class="code-tile${pinned ? ' pinned' : ''}" id="tile-${e.id}">
+      <div class="code-tile-top">
+        <div class="code-tile-meta">
+          <div class="code-label-text">${label}</div>
+          ${issuer ? `<div class="code-issuer-text">${escHtml(issuer)}</div>` : ''}
+        </div>
+        <button class="code-pin-btn" title="${pinned ? 'Unpin' : 'Pin'}"
+          onclick="event.stopPropagation();togglePin('${e.id}')">★</button>
+      </div>
+      <div class="code-main">
+        <div class="code-value${expiring ? ' expiring' : ''}" id="cv-${e.id}">${current}</div>
+        <div class="code-ring-wrap">
+          <svg class="code-ring-svg" width="34" height="34" viewBox="0 0 34 34">
+            <circle class="code-ring-bg" cx="17" cy="17" r="${RING_R}"/>
+            <circle class="code-ring-fg" id="ring-${e.id}" cx="17" cy="17" r="${RING_R}"
+              stroke="${stroke}"
+              stroke-dasharray="${RING_C.toFixed(2)}"
+              stroke-dashoffset="${offset.toFixed(2)}"/>
+          </svg>
+        </div>
+      </div>
+      ${expiring && nextCode ? `<div class="code-next">next: <strong>${nextCode}</strong></div>` : '<div class="code-next"></div>'}
+      <div style="display:none" id="code-raw-${e.id}" data-id="${e.id}" data-period="${period}" data-digits="${digits}" data-algorithm="${algorithm}" data-secret="${escHtml(secret)}"></div>
+    </div>`;
+  }));
+
+  grid.innerHTML = tiles.join('');
+  grid.querySelectorAll('.code-tile').forEach(tile => {
+    const raw = tile.querySelector('[id^="code-raw-"]');
+    if (!raw) return;
+    tile.addEventListener('click', () => copyTotpCode(raw.dataset.id, raw.dataset));
+  });
+}
+
+async function copyTotpCode(id, opts) {
+  const secret = opts.secret;
+  const code = await totpNow(secret, {
+    digits: parseInt(opts.digits, 10),
+    period: parseInt(opts.period, 10),
+    algorithm: opts.algorithm
+  }).catch(() => null);
+  if (!code) { toast('Could not generate code.', { error: true }); return; }
+  await copyField(code, 'totp:' + id);
+  const tile = $('tile-' + id);
+  if (tile) { tile.classList.add('copied'); setTimeout(() => tile.classList.remove('copied'), 1200); }
+}
+
+async function tickCodesGrid() {
+  if (S.filterType !== 'code' || !S.key) return;
+  const now = Date.now() / 1000;
+  const codes = getCodeEntries();
+  for (const e of codes) {
+    const period = parseInt(fv(e,'period') || '30', 10);
+    const digits = parseInt(fv(e,'digits') || '6', 10);
+    const algorithm = fv(e,'algorithm') || 'SHA-1';
+    const secret = fv(e,'secret');
+    const elapsed = now % period;
+    const remaining = period - elapsed;
+    const progress = remaining / period;
+    const expiring = remaining <= 5;
+
+    const ring = $('ring-' + e.id);
+    const cv = $('cv-' + e.id);
+    if (ring) {
+      ring.setAttribute('stroke-dashoffset', (RING_C * (1 - progress)).toFixed(2));
+      ring.setAttribute('stroke', expiring ? 'var(--danger)' : 'var(--accent)');
+    }
+    if (cv) cv.className = 'code-value' + (expiring ? ' expiring' : '');
+
+    // Refresh code at start of each period or when near-expiry shows next code
+    const tile = $('tile-' + e.id);
+    if (tile && (elapsed < 0.5 || expiring)) {
+      try {
+        const current = await totpNow(secret, { digits, period, algorithm });
+        if (cv) cv.textContent = current;
+        const nextDiv = tile.querySelector('.code-next');
+        if (nextDiv) {
+          if (expiring) {
+            const next = await totpNow(secret, { digits, period, algorithm, offset: 1 });
+            nextDiv.innerHTML = `next: <strong>${next}</strong>`;
+          } else {
+            nextDiv.innerHTML = '';
+          }
+        }
+      } catch {}
+    }
+  }
+}
+
+function startCodesTicker() {
+  stopCodesTicker();
+  _codesTicker = setInterval(() => tickCodesGrid(), 250);
+}
+function stopCodesTicker() {
+  if (_codesTicker) { clearInterval(_codesTicker); _codesTicker = null; }
+}
+
+// otpauth entry modal auto-fill
+function parseOtpUri(uri) {
+  if (!uri.startsWith('otpauth://')) return;
+  const p = parseOtpauthUri(uri);
+  if (!p) return;
+  if (p.label && $('code-label') && !$('code-label').value) $('code-label').value = p.label;
+  if (p.secret && $('code-secret')) $('code-secret').value = p.secret;
+  if (p.account && $('code-account')) $('code-account').value = p.account;
+  if (p.issuer && $('code-issuer')) $('code-issuer').value = p.issuer;
+  const algo = $('code-algo');
+  if (algo && ['SHA-1','SHA-256','SHA-512'].includes(p.algorithm)) algo.value = p.algorithm;
+  const dig = $('code-digits');
+  if (dig && [6,7,8].includes(p.digits)) dig.value = String(p.digits);
+  const per = $('code-period');
+  if (per && [30,60].includes(p.period)) per.value = String(p.period);
+}
+
+// otpauth paste area in import modal
+function previewOtpauthPaste(text) {
+  const lines = text.split('\n').map(s => s.trim()).filter(s => s.startsWith('otpauth://'));
+  const count = lines.map(l => parseOtpauthUri(l)).filter(Boolean).length;
+  $('import-preview-count').textContent = count + ' code' + (count !== 1 ? 's' : '') + ' found';
+  $('import-preview').style.display = count ? '' : 'none';
+  _importParsed = count ? lines.map(l => parseOtpauthUri(l)).filter(Boolean).map(p => ({
+    type: 'code',
+    fields: {
+      label: p.label, secret: p.secret, account: p.account,
+      issuer: p.issuer, algorithm: p.algorithm,
+      digits: String(p.digits), period: String(p.period)
+    }
+  })) : null;
 }
 
 // ══════════════════════════════════════════════════════════
