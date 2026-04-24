@@ -15,7 +15,7 @@ Your vault is a folder. Move the folder and your vault moves with it.
 - Every entry is individually encrypted: AES-256-GCM with a random 12-byte nonce
 - Key derived via PBKDF2-SHA-256, 600,000 iterations (OWASP 2023 level)
 - Vault format is an **append-only event log** — one `.jsonl` file per device, SHA-256 hash-chained
-- **Multi-device sync** by any transport: cloud folder, Syncthing, Git, USB, or encrypted archive export
+- **Multi-device sync** by any transport: cloud folder, Syncthing, Git, USB, encrypted archive export, or **QR sequence** (animated QR, no cable or network required)
 - Per-field last-writer-wins merge — deterministic, no conflicts, works with files arriving out of order
 - Device revocation without re-encrypting the vault
 - Built-in TOTP engine (RFC 6238): SHA-1/256/512, 6/7/8 digits, 30s/60s, countdown rings, next-code preview
@@ -93,6 +93,7 @@ Each device writes only its own `.jsonl` file. Sync is whatever moves files betw
 | Syncthing | P2P, no cloud. |
 | Git | Each device's log is a separate file — `git merge` never produces conflicts on event logs. |
 | USB / manual | Export encrypted archive, import on other device. |
+| **QR sequence** | Settings → Data → Send vault via QR. The archive is chunked into TJ1 frames and displayed as a looping QR animation. Scan with the receiving device's camera — no cable, no Wi-Fi, no account. |
 
 ## TOTP and Rotor
 
