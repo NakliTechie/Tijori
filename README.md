@@ -1,6 +1,6 @@
 # Tijori
 
-&#x26AB; **Try it now &rarr; https://naklitechie.github.io/Tijori/**
+&#x26AB; **Try it now &rarr; https://tijori.naklitechie.com/**
 
 **A password vault in one HTML file.**
 
