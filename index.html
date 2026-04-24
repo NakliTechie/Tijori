@@ -83,9 +83,10 @@ textarea { resize: vertical; min-height: 80px; }
 /* ── Welcome ────────────────────────────────────────────── */
 #screen-welcome {
   display: none; align-items: center; justify-content: center;
-  min-height: 100vh; padding: 24px 20px;
+  min-height: 100vh; padding: 24px 20px; position: relative;
 }
 #screen-welcome.active { display: flex; }
+.welcome-help { position: absolute; top: 20px; right: 20px; }
 .welcome-box { max-width: 400px; width: 100%; text-align: center; }
 .welcome-brand { font-size: 36px; font-weight: 800; letter-spacing: 2px; color: var(--accent); margin-bottom: 6px; }
 .welcome-tag { color: var(--muted); font-size: 14px; margin-bottom: 40px; }
@@ -443,6 +444,7 @@ textarea { resize: vertical; min-height: 80px; }
 
 <!-- ══════════════ SCREEN: WELCOME ══════════════ -->
 <section id="screen-welcome" class="screen">
+  <button class="btn-icon welcome-help" title="Help" onclick="showModal('modal-help')">?</button>
   <div class="welcome-box">
     <div class="welcome-brand">TIJORI</div>
     <div class="welcome-tag">browser-native password vault · no server · no account</div>
@@ -992,7 +994,8 @@ textarea { resize: vertical; min-height: 80px; }
       <p>Union all events, sort by <code>(ts, device_id)</code>, apply in order. Per-field last-writer-wins — each field carries its own timestamp, so two devices editing different fields of the same entry both win their field.</p>
     </div>
     <hr class="sep">
-    <div style="text-align:right">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <a href="guide/" target="_blank" rel="noopener" style="font-size:13px;color:var(--accent);text-decoration:none">📖 Full guide &amp; trust notes →</a>
       <button class="btn ghost btn-sm" onclick="hideModal('modal-help')">Close</button>
     </div>
   </div>
