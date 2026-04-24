@@ -160,6 +160,17 @@ textarea { resize: vertical; min-height: 80px; }
   border-radius: 6px; padding: 2px 8px; max-width: 160px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.storage-badge {
+  font-size: 10px; font-family: var(--mono); color: var(--accent);
+  background: rgba(124,196,255,.12); border: 1px solid rgba(124,196,255,.25);
+  border-radius: 4px; padding: 1px 6px; margin-left: 4px; white-space: nowrap;
+}
+.vault-picker-item {
+  display: block; width: 100%; text-align: left; padding: 12px 16px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: 14px; cursor: pointer; margin-bottom: 8px;
+}
+.vault-picker-item:hover { border-color: var(--accent); color: var(--accent); }
 .topbar-space { flex: 1; }
 .topbar-actions { display: flex; align-items: center; gap: 6px; }
 
@@ -443,7 +454,7 @@ textarea { resize: vertical; min-height: 80px; }
       <strong id="reconnect-folder-name"></strong> needs permission to reconnect.<br>
       <button class="btn" style="margin-top:10px;width:100%;" onclick="handleReconnect()">Reconnect vault</button>
     </div>
-    <div class="welcome-footer">
+    <div class="welcome-footer" id="welcome-footer">
       No network requests after page load.<br>
       Your vault lives in a folder you choose.
     </div>
@@ -455,7 +466,11 @@ textarea { resize: vertical; min-height: 80px; }
   <div class="auth-box">
     <button class="back-link" onclick="showScreen('welcome')">← Back</button>
     <h2>Create vault <span id="create-folder-tag" class="folder-tag"></span></h2>
-    <p class="auth-sub">Choose a master password and a name for this device. There is no recovery — back up regularly.</p>
+    <p class="auth-sub" id="create-sub">Choose a master password and a name for this device. There is no recovery — back up regularly.</p>
+    <div class="field" id="create-vault-name-wrap" style="display:none">
+      <label for="create-vault-name">Vault name</label>
+      <input type="text" id="create-vault-name" placeholder="My Vault" maxlength="64" autocomplete="off">
+    </div>
     <div class="warn-box">
       <strong>No recovery.</strong> Forget the master password and your vault is gone. This is the cost of zero-knowledge.
     </div>
@@ -503,7 +518,7 @@ textarea { resize: vertical; min-height: 80px; }
         <div class="hint" id="unlock-hint" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px;"></div>
       </div>
       <div class="actions-bar">
-        <button class="btn ghost btn-sm" type="button" onclick="handleOpenExisting()">Different folder</button>
+        <button class="btn ghost btn-sm" type="button" id="unlock-diff-btn" onclick="handleOpenExisting()">Different folder</button>
         <button class="btn" id="unlock-btn" type="submit">Unlock</button>
       </div>
     </form>
@@ -539,6 +554,7 @@ textarea { resize: vertical; min-height: 80px; }
   <div class="topbar">
     <span class="topbar-brand">TIJORI</span>
     <span class="topbar-folder" id="topbar-folder"></span>
+    <span class="storage-badge" id="storage-badge" style="display:none">browser</span>
     <div class="topbar-space"></div>
     <div class="topbar-actions">
       <button class="btn-icon" title="Help" onclick="showModal('modal-help')">?</button>
@@ -837,6 +853,18 @@ textarea { resize: vertical; min-height: 80px; }
   </div>
 </div>
 
+<!-- ══════════════ MODAL: OPFS VAULT PICKER ══════════════ -->
+<div id="modal-vault-picker" class="modal-bg">
+  <div class="modal" style="max-width:360px">
+    <h3 style="margin:0 0 8px">Open vault</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 16px">Choose a vault stored in this browser.</p>
+    <div id="vault-picker-list"></div>
+    <div class="actions-bar" style="margin-top:8px">
+      <button class="btn ghost btn-sm" onclick="hideModal('modal-vault-picker')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ MODAL: QR SEND ══════════════ -->
 <div id="modal-qr-send" class="modal-bg">
   <div class="modal">
@@ -1115,6 +1143,8 @@ const S = {
   idleTimer: null,
   clipTimers: {},
   _pendingHandle: null,
+  _isOpfs: false,
+  _opfsVaultName: null,
   settings: { idleTimeout: 300, clipClear: 30, lockOnHide: true }
 };
 
@@ -1154,9 +1184,28 @@ async function idbSet(k, v) {
   } catch {}
 }
 
+const FSA_AVAILABLE = 'showDirectoryPicker' in window;
+
 // ══════════════════════════════════════════════════════════
 // FILE SYSTEM
 // ══════════════════════════════════════════════════════════
+
+async function opfsVaultDir(name, create = false) {
+  const root = await navigator.storage.getDirectory();
+  const vaultsDir = await root.getDirectoryHandle('tijori-vaults', { create });
+  return vaultsDir.getDirectoryHandle(name, { create });
+}
+
+async function listOpfsVaults() {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const vaultsDir = await root.getDirectoryHandle('tijori-vaults');
+    const names = [];
+    for await (const [name, handle] of vaultsDir.entries())
+      if (handle.kind === 'directory') names.push(name);
+    return names.sort();
+  } catch { return []; }
+}
 
 async function readFileText(dir, name) {
   try {
@@ -1340,7 +1389,7 @@ async function createVault(dirHandle, password, deviceLabel) {
   S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
   S.deviceLabel = deviceLabel;
   localStorage.setItem('tijori.deviceLabel', deviceLabel);
-  await idbSet('dirHandle', dirHandle);
+  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
   await appendEvent('device_registered', { device_id: S.deviceId, label: deviceLabel });
   S.entries = new Map();
 }
@@ -1366,7 +1415,7 @@ async function unlockVault(dirHandle, password) {
   S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
   if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
   if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
-  await idbSet('dirHandle', dirHandle);
+  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
   await loadAndMerge();
   const saved = localStorage.getItem('tijori.settings');
   if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
@@ -1396,7 +1445,7 @@ async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
 
   meta.devices.push({ id: deviceId, label: deviceLabel, registered_at: nowISO() });
   await writeMeta(dirHandle, meta);
-  await idbSet('dirHandle', dirHandle);
+  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
   await appendEvent('device_registered', { device_id: deviceId, label: deviceLabel });
   await loadAndMerge();
   const saved = localStorage.getItem('tijori.settings');
@@ -1413,7 +1462,8 @@ function lock() {
   Object.values(S.clipTimers).forEach(t => clearTimeout(t));
   S.clipTimers = {};
   clearTimeout(S.idleTimer);
-  $('unlock-folder-tag').textContent = S.dirHandle?.name ?? '';
+  $('unlock-folder-tag').textContent = S._isOpfs ? (S._opfsVaultName ?? '') : (S.dirHandle?.name ?? '');
+  $('unlock-diff-btn').textContent = S._isOpfs ? 'Different vault' : 'Different folder';
   $('unlock-hint').textContent = '';
   $('unlock-pass').value = '';
   hideAllModals();
@@ -1579,7 +1629,9 @@ function toast(msg, { error = false, dur = 2500 } = {}) {
 // ══════════════════════════════════════════════════════════
 
 function renderTopbar() {
-  $('topbar-folder').textContent = S.dirHandle?.name ?? 'vault';
+  $('topbar-folder').textContent = S._isOpfs ? (S._opfsVaultName ?? 'vault') : (S.dirHandle?.name ?? 'vault');
+  const badge = $('storage-badge');
+  if (badge) badge.style.display = S._isOpfs ? '' : 'none';
 }
 
 function getFilteredEntries() {
@@ -2240,8 +2292,17 @@ function formatExpiry(input) {
 // ══════════════════════════════════════════════════════════
 
 async function handleCreateNew() {
-  if (!window.showDirectoryPicker) {
-    toast('File System Access API not supported in this browser. Try Chrome or Edge.', { error: true, dur: 5000 });
+  if (!FSA_AVAILABLE) {
+    S._isOpfs = true;
+    $('create-folder-tag').style.display = 'none';
+    $('create-vault-name-wrap').style.display = '';
+    $('create-vault-name').value = 'My Vault';
+    $('create-sub').textContent = 'Choose a name for this vault and a master password. There is no recovery — export regularly.';
+    $('create-device-label').value = getDefaultDeviceLabel();
+    $('create-password').value = '';
+    $('create-password2').value = '';
+    updateEntropyMeter('');
+    showScreen('create');
     return;
   }
   try {
@@ -2251,8 +2312,12 @@ async function handleCreateNew() {
       toast('This folder already has a vault. Use "Open vault" instead.', { error: true });
       return;
     }
+    S._isOpfs = false;
     S.dirHandle = dir;
+    $('create-folder-tag').style.display = '';
     $('create-folder-tag').textContent = dir.name;
+    $('create-vault-name-wrap').style.display = 'none';
+    $('create-sub').textContent = 'Choose a master password and a name for this device. There is no recovery — back up regularly.';
     $('create-device-label').value = getDefaultDeviceLabel();
     $('create-password').value = '';
     $('create-password2').value = '';
@@ -2262,14 +2327,20 @@ async function handleCreateNew() {
 }
 
 async function handleOpenExisting() {
-  if (!window.showDirectoryPicker) {
-    toast('File System Access API not supported. Try Chrome or Edge.', { error: true, dur: 5000 });
+  if (!FSA_AVAILABLE) {
+    const vaults = await listOpfsVaults();
+    if (vaults.length === 0) {
+      toast('No browser vault found. Create one first.', { error: true }); return;
+    }
+    if (vaults.length === 1) { await _openOpfsVault(vaults[0]); return; }
+    showOpfsVaultPicker(vaults);
     return;
   }
   try {
     const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
     const meta = await readMeta(dir);
     if (!meta) { toast('No Tijori vault found in that folder.', { error: true }); return; }
+    S._isOpfs = false;
     S.meta = meta; S.dirHandle = dir;
     await idbSet('dirHandle', dir);
 
@@ -2280,6 +2351,7 @@ async function handleOpenExisting() {
       S.deviceId = storedId;
       S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown';
       $('unlock-folder-tag').textContent = dir.name;
+      $('unlock-diff-btn').textContent = 'Different folder';
       $('unlock-hint').textContent = '';
       showScreen('unlock');
     } else {
@@ -2290,6 +2362,45 @@ async function handleOpenExisting() {
       showScreen('register');
     }
   } catch (e) { if (e.name !== 'AbortError') toast(e.message, { error: true }); }
+}
+
+async function _openOpfsVault(name) {
+  try {
+    const dir = await opfsVaultDir(name);
+    const meta = await readMeta(dir);
+    if (!meta) { toast('Vault not found.', { error: true }); return; }
+    S.meta = meta; S.dirHandle = dir; S._isOpfs = true; S._opfsVaultName = name;
+    await idbSet('opfsVaultName', name);
+    const storedId = localStorage.getItem('tijori.deviceId');
+    const registered = meta.devices.some(d => d.id === storedId);
+    if (registered) {
+      S.deviceId = storedId;
+      S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown';
+      $('unlock-folder-tag').textContent = name;
+      $('unlock-diff-btn').textContent = 'Different vault';
+      $('unlock-hint').textContent = '';
+      showScreen('unlock');
+    } else {
+      $('register-folder-tag').textContent = name;
+      $('register-device-label').value = getDefaultDeviceLabel();
+      $('register-password').value = '';
+      if (!S.deviceId) S.deviceId = uuid();
+      showScreen('register');
+    }
+  } catch (e) { toast(e.message, { error: true }); }
+}
+
+function showOpfsVaultPicker(vaults) {
+  const list = $('vault-picker-list');
+  list.innerHTML = '';
+  for (const name of vaults) {
+    const btn = document.createElement('button');
+    btn.className = 'vault-picker-item';
+    btn.textContent = name;
+    btn.onclick = () => { hideModal('modal-vault-picker'); _openOpfsVault(name); };
+    list.appendChild(btn);
+  }
+  showModal('modal-vault-picker');
 }
 
 async function handleReconnect() {
@@ -2316,7 +2427,14 @@ async function handleCreateVault() {
   const btn = $('create-btn');
   btn.disabled = true; btn.textContent = 'Creating…';
   try {
-    await createVault(S.dirHandle, pw, label);
+    let dir = S.dirHandle;
+    if (S._isOpfs) {
+      const name = ($('create-vault-name').value.trim() || 'My Vault').replace(/[/\\:<>"|?*]/g, '-');
+      dir = await opfsVaultDir(name, true);
+      S._opfsVaultName = name;
+      await idbSet('opfsVaultName', name);
+    }
+    await createVault(dir, pw, label);
     $('create-password').value = ''; $('create-password2').value = '';
     showScreen('vault'); toast('Vault created!');
   } catch (e) { toast(e.message, { error: true }); }
@@ -2595,7 +2713,23 @@ async function init() {
   const saved = localStorage.getItem('tijori.settings');
   if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
 
-  // Try to reconnect stored dirHandle
+  // OPFS reconnect (no permission needed — works on mobile)
+  const opfsName = await idbGet('opfsVaultName');
+  if (opfsName) {
+    try {
+      const dir = await opfsVaultDir(opfsName);
+      const meta = await readMeta(dir);
+      if (meta) {
+        S.dirHandle = dir; S.meta = meta; S._isOpfs = true; S._opfsVaultName = opfsName;
+        $('unlock-folder-tag').textContent = opfsName;
+        $('unlock-diff-btn').textContent = 'Different vault';
+        showScreen('unlock');
+        return;
+      }
+    } catch {}
+  }
+
+  // FSA reconnect
   try {
     const stored = await idbGet('dirHandle');
     if (stored) {
@@ -2615,6 +2749,10 @@ async function init() {
       }
     }
   } catch {}
+
+  if (!FSA_AVAILABLE) {
+    $('welcome-footer').innerHTML = 'No network requests after page load.<br>Your vault is stored in this browser.';
+  }
 
   showScreen('welcome');
 }
