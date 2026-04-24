@@ -3,3 +3,5 @@
 !README.md
 !LICENSE
 !.gitignore
+!guide/
+!guide/**

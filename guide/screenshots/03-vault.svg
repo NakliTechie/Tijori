@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 700" width="390" height="700">
+  <rect width="390" height="700" fill="#0b0d10"/>
+
+  <!-- Topbar -->
+  <rect width="390" height="52" fill="#0b0d10" stroke-width="0"/>
+  <line x1="0" y1="52" x2="390" y2="52" stroke="#262c34" stroke-width="1"/>
+  <text x="20" y="34" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="800" font-size="18" letter-spacing="1" fill="#7cc4ff">TIJORI</text>
+  <rect x="104" y="18" width="80" height="20" rx="5" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="144" y="32" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#8a94a3">my-vault</text>
+  <!-- Settings + Lock buttons -->
+  <rect x="298" y="16" width="28" height="24" rx="6" fill="transparent" stroke="#262c34" stroke-width="1"/>
+  <text x="312" y="33" text-anchor="middle" font-size="14" fill="#8a94a3">⚙</text>
+  <rect x="332" y="16" width="42" height="24" rx="6" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="353" y="33" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#e6e8eb">Lock</text>
+
+  <!-- Toolbar -->
+  <rect x="20" y="64" width="310" height="36" rx="8" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="40" y="87" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13" fill="#5a6676">Search entries…</text>
+  <!-- + Add -->
+  <rect x="340" y="66" width="34" height="32" rx="7" fill="#7cc4ff"/>
+  <text x="357" y="87" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="700" font-size="18" fill="#001122">＋</text>
+
+  <!-- Filter tabs -->
+  <g transform="translate(20,110)">
+    <!-- All active -->
+    <rect width="44" height="28" rx="6" fill="#7cc4ff"/>
+    <text x="22" y="19" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" font-weight="600" fill="#001122">All</text>
+    <!-- Logins -->
+    <rect x="50" width="54" height="28" rx="6" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+    <text x="77" y="19" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Logins</text>
+    <!-- Cards -->
+    <rect x="110" width="50" height="28" rx="6" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+    <text x="135" y="19" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Cards</text>
+    <!-- Notes -->
+    <rect x="166" width="52" height="28" rx="6" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+    <text x="192" y="19" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Notes</text>
+    <!-- Codes -->
+    <rect x="224" width="54" height="28" rx="6" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+    <text x="251" y="19" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Codes</text>
+  </g>
+
+  <!-- Entry: GitHub (Login) -->
+  <rect x="20" y="158" width="350" height="64" rx="12" fill="#14181d" stroke="#262c34" stroke-width="1"/>
+  <text x="58" y="183" font-size="22" fill="#e6e8eb">🔑</text>
+  <text x="90" y="182" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="600" font-size="15" fill="#e6e8eb">GitHub</text>
+  <text x="90" y="200" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">chirag@example.com</text>
+  <rect x="326" y="178" width="28" height="28" rx="6" fill="transparent" stroke="#262c34" stroke-width="1"/>
+  <text x="340" y="197" text-anchor="middle" font-size="15" fill="#8a94a3">⎘</text>
+
+  <!-- Entry: Visa Card -->
+  <rect x="20" y="232" width="350" height="64" rx="12" fill="#14181d" stroke="#262c34" stroke-width="1"/>
+  <text x="58" y="257" font-size="22" fill="#e6e8eb">💳</text>
+  <text x="90" y="256" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="600" font-size="15" fill="#e6e8eb">Visa Debit</text>
+  <text x="90" y="274" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">•••• 4242</text>
+
+  <!-- Entry: WiFi Note -->
+  <rect x="20" y="306" width="350" height="64" rx="12" fill="#14181d" stroke="#262c34" stroke-width="1"/>
+  <text x="58" y="331" font-size="22" fill="#e6e8eb">📝</text>
+  <text x="90" y="330" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="600" font-size="15" fill="#e6e8eb">WiFi — Home</text>
+  <text x="90" y="348" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Network passphrase</text>
+
+  <!-- Entry: Google Code -->
+  <rect x="20" y="380" width="350" height="64" rx="12" fill="#14181d" stroke="#262c34" stroke-width="1"/>
+  <text x="58" y="405" font-size="22" fill="#e6e8eb">🔐</text>
+  <text x="90" y="404" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="600" font-size="15" fill="#e6e8eb">Google</text>
+  <text x="90" y="422" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Google · chirag@gmail.com</text>
+</svg>

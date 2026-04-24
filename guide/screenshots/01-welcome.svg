@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 700" width="390" height="700">
+  <rect width="390" height="700" fill="#0b0d10"/>
+
+  <!-- Brand -->
+  <text x="195" y="268" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="800" font-size="44" letter-spacing="8" fill="#7cc4ff">TIJORI</text>
+
+  <!-- Tagline -->
+  <text x="195" y="300" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13" fill="#8a94a3">browser-native password vault · no server · no account</text>
+
+  <!-- Create button -->
+  <rect x="75" y="342" width="240" height="52" rx="11" fill="#7cc4ff"/>
+  <text x="195" y="374" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="700" font-size="16" fill="#001122">Create new vault</text>
+
+  <!-- Open button -->
+  <rect x="75" y="406" width="240" height="52" rx="11" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="195" y="438" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="600" font-size="16" fill="#e6e8eb">Open vault</text>
+
+  <!-- Footer -->
+  <text x="195" y="500" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">No network requests after page load.</text>
+  <text x="195" y="520" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Your vault lives in a folder you choose.</text>
+</svg>

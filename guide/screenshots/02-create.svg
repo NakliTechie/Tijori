@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 700" width="390" height="700">
+  <rect width="390" height="700" fill="#0b0d10"/>
+
+  <!-- Content box -->
+  <rect x="20" y="40" width="350" height="620" rx="14" fill="#14181d" stroke="#262c34" stroke-width="1"/>
+
+  <!-- Back link -->
+  <text x="40" y="80" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13" fill="#8a94a3">← Back</text>
+
+  <!-- Title -->
+  <text x="40" y="114" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="700" font-size="22" fill="#e6e8eb">Create vault</text>
+  <!-- Folder chip -->
+  <rect x="208" y="98" width="90" height="22" rx="5" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="253" y="114" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#8a94a3">my-vault</text>
+
+  <!-- Subtitle -->
+  <text x="40" y="140" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Choose a master password. There is no recovery.</text>
+
+  <!-- Warning box -->
+  <rect x="40" y="156" width="310" height="52" rx="8" fill="rgba(255,200,87,0.08)" stroke="rgba(255,200,87,0.3)" stroke-width="1"/>
+  <text x="56" y="177" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="700" font-size="12" fill="#ffc857">No recovery.</text>
+  <text x="56" y="195" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="11" fill="#ffc857">Forget the master password and your vault is gone.</text>
+
+  <!-- Device name label + field -->
+  <text x="40" y="234" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Device name</text>
+  <rect x="40" y="242" width="310" height="40" rx="8" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="56" y="268" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="14" fill="#e6e8eb">Chirag's MacBook</text>
+
+  <!-- Master password label + field -->
+  <text x="40" y="308" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Master password</text>
+  <rect x="40" y="316" width="310" height="40" rx="8" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="56" y="342" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15" fill="#e6e8eb" letter-spacing="3">••••••••••••••••</text>
+  <text x="334" y="342" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="16" fill="#8a94a3">👁</text>
+
+  <!-- Entropy bar -->
+  <rect x="40" y="362" width="310" height="4" rx="2" fill="#262c34"/>
+  <rect x="40" y="362" width="240" height="4" rx="2" fill="#6bdc8e"/>
+  <text x="40" y="380" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="11" fill="#6bdc8e">~104 bits — strong</text>
+
+  <!-- Confirm password -->
+  <text x="40" y="410" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" fill="#8a94a3">Confirm password</text>
+  <rect x="40" y="418" width="310" height="40" rx="8" fill="#1b2026" stroke="#262c34" stroke-width="1"/>
+  <text x="56" y="444" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15" fill="#e6e8eb" letter-spacing="3">••••••••••••••••</text>
+
+  <!-- Create button -->
+  <rect x="210" y="484" width="140" height="44" rx="9" fill="#7cc4ff"/>
+  <text x="280" y="512" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-weight="700" font-size="15" fill="#001122">Create vault</text>
+</svg>
