@@ -953,7 +953,8 @@ function $(id) { return document.getElementById(id); }
 
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 function base32Decode(s) {
-  s = s.toUpperCase().replace(/=+$/, '').replace(/[^A-Z2-7]/g, '');
+  s = s.toUpperCase().replace(/=+$/, '').replace(/\s/g, '');
+  if (/[^A-Z2-7]/.test(s)) throw new Error('Invalid base32 character in TOTP secret.');
   let bits = 0, val = 0;
   const out = [];
   for (const c of s) {
@@ -1158,12 +1159,20 @@ async function loadAndMerge() {
   const streamNames = await getAllStreamNames(S.dirHandle);
   const allEvents = [];
 
+  const tamperedDevices = new Set();
   for (const name of streamNames) {
     const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
     const lines = await readStream(S.dirHandle, deviceId);
-    for (const line of lines) {
-      try { allEvents.push({ ...JSON.parse(line), _raw: line }); } catch {}
+    for (let i = 0; i < lines.length; i++) {
+      let ev;
+      try { ev = JSON.parse(lines[i]); } catch { tamperedDevices.add(deviceId); break; }
+      const expected = i === 0 ? 'genesis' : await sha256b64(lines[i - 1]);
+      if (ev.prev_hash !== expected) { tamperedDevices.add(deviceId); break; }
+      allEvents.push({ ...ev, _raw: lines[i] });
     }
+  }
+  if (tamperedDevices.size) {
+    toast('⚠ Chain integrity failure on ' + [...tamperedDevices].join(', ').slice(0, 40) + ' — events excluded', { error: true });
   }
 
   // Deterministic order: (ts, device_id)
@@ -1369,6 +1378,7 @@ async function copyField(text, timerKey) {
     const ta = Object.assign(document.createElement('textarea'),
       { value: text, style: 'position:fixed;left:-9999px' });
     document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    ta.value = '';
     document.body.removeChild(ta);
   }
   toast('Copied — clears in ' + S.settings.clipClear + 's');
@@ -1475,7 +1485,10 @@ function showScreen(name) {
 }
 
 function showModal(id) { $(id)?.classList.add('active'); }
-function hideModal(id) { $(id)?.classList.remove('active'); }
+function hideModal(id) {
+  $(id)?.classList.remove('active');
+  if (id === 'modal-entry') clearEntryForm();
+}
 function hideAllModals() {
   document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('active'));
 }
@@ -2075,7 +2088,9 @@ async function importArchive(text) {
     const existingIds = new Set(S.meta.devices.map(d => d.id));
     let changed = false;
     for (const d of archive.meta.devices) {
-      if (!existingIds.has(d.id)) { S.meta.devices.push(d); changed = true; }
+      if (typeof d.id === 'string' && typeof d.label === 'string' && !existingIds.has(d.id)) {
+        S.meta.devices.push(d); changed = true;
+      }
     }
     if (changed) await writeMeta(S.dirHandle, S.meta);
   }
