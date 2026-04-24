@@ -1,0 +1,2138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="author" content="Chirag Patnaik">
+<meta name="version" content="1.0.0">
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'unsafe-inline';
+  style-src 'unsafe-inline';
+  img-src data: blob:;
+  connect-src 'none';
+  base-uri 'none';
+  form-action 'none';
+  frame-ancestors 'none';
+">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%237cc4ff'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='700' font-size='16' fill='%23001122'%3ETJ%3C/text%3E%3C/svg%3E">
+<title>Tijori — password vault</title>
+<style>
+:root {
+  --bg: #0b0d10;
+  --panel: #14181d;
+  --panel-2: #1b2026;
+  --border: #262c34;
+  --text: #e6e8eb;
+  --muted: #8a94a3;
+  --accent: #7cc4ff;
+  --accent-2: #4a9eff;
+  --danger: #ff6b6b;
+  --ok: #6bdc8e;
+  --warn: #ffc857;
+  --radius: 12px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f6f9;
+    --panel: #ffffff;
+    --panel-2: #eef1f5;
+    --border: #d4d9e2;
+    --text: #0f1216;
+    --muted: #5a6676;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+body { min-height: 100vh; min-height: 100dvh; }
+button { font-family: inherit; font-size: inherit; cursor: pointer; }
+input, textarea, select {
+  font-family: inherit; font-size: 15px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; width: 100%;
+}
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+textarea { resize: vertical; min-height: 80px; }
+
+.btn {
+  background: var(--accent); color: #001122; border: none; border-radius: 8px;
+  padding: 10px 18px; font-weight: 600; font-size: 14px; white-space: nowrap;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+.btn.danger { background: var(--danger); color: #fff; }
+.btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+.btn-sm { padding: 6px 12px; font-size: 12px; }
+.btn-icon {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); border-radius: 8px; padding: 8px 10px;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.btn-icon:hover { color: var(--text); border-color: var(--text); }
+
+/* ── App shell ─────────────────────────────────────────── */
+.app { max-width: 720px; margin: 0 auto; padding: 0 0 80px; }
+.screen { display: none; }
+.screen.active { display: block; }
+
+/* ── Welcome ────────────────────────────────────────────── */
+#screen-welcome {
+  display: none; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 24px 20px;
+}
+#screen-welcome.active { display: flex; }
+.welcome-box { max-width: 400px; width: 100%; text-align: center; }
+.welcome-brand { font-size: 36px; font-weight: 800; letter-spacing: 2px; color: var(--accent); margin-bottom: 6px; }
+.welcome-tag { color: var(--muted); font-size: 14px; margin-bottom: 40px; }
+.welcome-actions { display: flex; flex-direction: column; gap: 12px; }
+.welcome-actions .btn { padding: 14px 20px; font-size: 15px; }
+.welcome-reconnect {
+  display: none; margin-top: 20px; padding: 14px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px; color: var(--muted);
+}
+.welcome-reconnect.show { display: block; }
+.welcome-footer { margin-top: 40px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+/* ── Create / Register / Unlock ────────────────────────── */
+.auth-screen {
+  display: none; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 24px 20px;
+}
+.auth-screen.active { display: flex; }
+.auth-box {
+  max-width: 420px; width: 100%;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 28px;
+}
+.auth-box h2 { margin: 0 0 4px; font-size: 22px; }
+.auth-box .auth-sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+.auth-box .folder-tag {
+  display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 8px; font-size: 12px; font-family: var(--mono);
+  color: var(--muted); margin-left: 6px;
+}
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.field .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.field-row { display: flex; gap: 8px; align-items: flex-end; }
+.field-row > :first-child { flex: 1; }
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 40px; }
+.pw-toggle {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--muted); font-size: 16px; padding: 4px 6px;
+  line-height: 1; cursor: pointer;
+}
+.actions-bar { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+.warn-box {
+  background: rgba(255,200,87,0.08); border: 1px solid rgba(255,200,87,0.3);
+  border-radius: 8px; padding: 12px 14px; color: var(--warn);
+  font-size: 13px; line-height: 1.5; margin-bottom: 16px;
+}
+.entropy-bar-wrap { height: 4px; background: var(--border); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.entropy-bar { height: 100%; width: 0; border-radius: 2px; transition: width 0.2s, background 0.2s; }
+.entropy-label { font-size: 11px; color: var(--muted); margin-top: 4px; height: 14px; }
+.back-link {
+  background: none; border: none; color: var(--muted); font-size: 13px;
+  padding: 0; margin-bottom: 16px; display: flex; align-items: center; gap: 4px;
+}
+.back-link:hover { color: var(--text); }
+
+/* ── Vault screen ────────────────────────────────────────── */
+#screen-vault { display: none; flex-direction: column; min-height: 100vh; }
+#screen-vault.active { display: flex; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  padding: 12px 20px; display: flex; align-items: center; gap: 10px;
+}
+.topbar-brand { font-size: 18px; font-weight: 800; letter-spacing: 1px; color: var(--accent); flex-shrink: 0; }
+.topbar-folder {
+  font-size: 12px; font-family: var(--mono); color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 8px; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topbar-space { flex: 1; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; }
+
+.vault-toolbar {
+  padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+.search-wrap { flex: 1; min-width: 180px; position: relative; }
+.search-wrap input { padding-right: 32px; }
+.search-clear {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--muted); font-size: 16px;
+  padding: 2px 4px; line-height: 1; cursor: pointer; display: none;
+}
+.search-clear.show { display: block; }
+
+.filter-tabs { display: flex; gap: 4px; }
+.filter-tab {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); border-radius: 6px; padding: 7px 12px;
+  font-size: 13px; font-weight: 500;
+}
+.filter-tab.active { background: var(--accent); color: #001122; border-color: var(--accent); }
+
+.entry-list { flex: 1; padding: 0 20px; }
+.entry-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 8px; cursor: pointer;
+  transition: border-color 0.15s;
+}
+.entry-item:hover { border-color: var(--accent-2); }
+.entry-icon { font-size: 20px; width: 32px; text-align: center; flex-shrink: 0; }
+.entry-info { flex: 1; min-width: 0; }
+.entry-title { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entry-sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.copy-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--muted); border-radius: 6px; padding: 6px 10px; font-size: 15px;
+  flex-shrink: 0; line-height: 1;
+}
+.copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.vault-empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+.vault-empty h3 { color: var(--text); margin: 0 0 8px; font-size: 18px; }
+.vault-empty p { margin: 0 0 20px; }
+
+/* ── Modals ──────────────────────────────────────────────── */
+.modal-bg {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center;
+  padding: 20px; z-index: 100;
+}
+.modal-bg.active { display: flex; }
+.modal {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px;
+  max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.modal::-webkit-scrollbar { width: 6px; }
+.modal::-webkit-scrollbar-track { background: transparent; }
+.modal::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.modal h3 { margin: 0 0 16px; font-size: 18px; }
+.modal-wide { max-width: 600px; }
+
+/* Tab row (entry modal) */
+.tab-row {
+  display: flex; gap: 4px; margin-bottom: 18px;
+  background: var(--panel-2); padding: 4px; border-radius: 8px;
+}
+.tab-row button {
+  flex: 1; background: transparent; border: none;
+  color: var(--muted); padding: 8px 10px; border-radius: 6px;
+  font-weight: 500; font-size: 13px;
+}
+.tab-row button.active { background: var(--accent); color: #001122; }
+.tab-row button:disabled { opacity: 0.35; cursor: not-allowed; }
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* Entry detail rows (read mode) */
+.entry-detail-field { margin-bottom: 14px; }
+.entry-detail-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.entry-detail-value {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 12px; font-size: 14px; min-height: 40px;
+}
+.entry-detail-value .val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; word-break: break-all; }
+.entry-detail-value .val.masked { color: var(--muted); letter-spacing: 2px; }
+.entry-detail-value .val.url a { color: var(--accent); word-break: break-all; }
+
+/* Settings tabs */
+.settings-tabs { display: flex; gap: 0; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.settings-tab-btn {
+  background: none; border: none; color: var(--muted);
+  padding: 10px 16px; font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.settings-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.settings-pane { display: none; }
+.settings-pane.active { display: block; }
+
+/* Device roster */
+.device-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px;
+  gap: 10px;
+}
+.device-name { font-weight: 500; font-size: 14px; }
+.device-id { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+.badge {
+  display: inline-block; background: var(--accent); color: #001122;
+  border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700;
+  vertical-align: middle; margin-left: 6px;
+}
+
+/* Import modal */
+.import-format-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
+}
+.import-format-btn {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; text-align: left;
+  cursor: pointer; transition: border-color 0.15s;
+}
+.import-format-btn:hover { border-color: var(--accent); }
+.import-format-btn.selected { border-color: var(--accent); background: rgba(124,196,255,0.08); }
+.import-format-btn .fmt-name { font-weight: 600; font-size: 13px; }
+.import-format-btn .fmt-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.csv-map-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+.csv-map-row label { width: 80px; color: var(--muted); flex-shrink: 0; }
+.csv-map-row select { flex: 1; }
+
+/* Integrity check */
+.integrity-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.integrity-row:last-child { border-bottom: none; }
+.integrity-row .ok { color: var(--ok); font-size: 16px; }
+.integrity-row .err { color: var(--danger); font-size: 16px; }
+
+/* Help modal */
+.help-body { font-size: 14px; line-height: 1.6; }
+.help-body h4 { margin: 18px 0 6px; font-size: 13px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
+.help-body h4:first-child { margin-top: 0; }
+.help-body p { margin: 0 0 10px; }
+.help-body ul { margin: 0 0 10px; padding-left: 20px; }
+.help-body li { margin-bottom: 4px; }
+.help-body code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+.help-body .kbd {
+  display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px;
+  font-family: var(--mono); font-size: 11px;
+}
+
+/* In-app confirm dialog */
+#modal-confirm .modal { max-width: 360px; }
+#confirm-title { margin: 0 0 8px; font-size: 17px; }
+#confirm-message { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
+
+/* Footer nav */
+.footer-nav {
+  position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 24px;
+  background: var(--panel); border: 1px solid var(--border);
+  padding: 6px 18px; border-radius: 20px;
+  box-shadow: 0 1px 8px rgba(0,0,0,0.15);
+  font-size: 12px; white-space: nowrap; z-index: 50;
+}
+.footer-nav a { color: var(--accent); text-decoration: none; }
+.footer-nav a:hover { opacity: 0.7; }
+
+/* Separator */
+.sep { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+@media (max-width: 520px) {
+  .app { padding: 0 0 100px; }
+  .topbar { padding: 10px 14px; }
+  .vault-toolbar { padding: 10px 14px; }
+  .entry-list { padding: 0 14px; }
+  .modal { padding: 18px; }
+  .import-format-grid { grid-template-columns: 1fr; }
+  .filter-tabs { overflow-x: auto; scrollbar-width: none; }
+  .filter-tabs::-webkit-scrollbar { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+<!-- ══════════════ SCREEN: WELCOME ══════════════ -->
+<section id="screen-welcome" class="screen">
+  <div class="welcome-box">
+    <div class="welcome-brand">TIJORI</div>
+    <div class="welcome-tag">browser-native password vault · no server · no account</div>
+    <div class="welcome-actions">
+      <button class="btn" onclick="handleCreateNew()">Create new vault</button>
+      <button class="btn secondary" onclick="handleOpenExisting()">Open vault</button>
+    </div>
+    <div id="reconnect-banner" class="welcome-reconnect">
+      <strong id="reconnect-folder-name"></strong> needs permission to reconnect.<br>
+      <button class="btn" style="margin-top:10px;width:100%;" onclick="handleReconnect()">Reconnect vault</button>
+    </div>
+    <div class="welcome-footer">
+      No network requests after page load.<br>
+      Your vault lives in a folder you choose.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ SCREEN: CREATE VAULT ══════════════ -->
+<section id="screen-create" class="auth-screen screen">
+  <div class="auth-box">
+    <button class="back-link" onclick="showScreen('welcome')">← Back</button>
+    <h2>Create vault <span id="create-folder-tag" class="folder-tag"></span></h2>
+    <p class="auth-sub">Choose a master password and a name for this device. There is no recovery — back up regularly.</p>
+    <div class="warn-box">
+      <strong>No recovery.</strong> Forget the master password and your vault is gone. This is the cost of zero-knowledge.
+    </div>
+    <div class="field">
+      <label for="create-device-label">Device name</label>
+      <input type="text" id="create-device-label" placeholder="e.g. Chirag's MacBook" autocomplete="off" maxlength="64">
+    </div>
+    <div class="field">
+      <label for="create-password">Master password</label>
+      <div class="pw-wrap">
+        <input type="password" id="create-password" placeholder="at least 20 bits entropy" autocomplete="new-password"
+          oninput="updateEntropyMeter(this.value)">
+        <button class="pw-toggle" type="button" onclick="togglePw('create-password', this)">👁</button>
+      </div>
+      <div class="entropy-bar-wrap"><div class="entropy-bar" id="entropy-bar"></div></div>
+      <div class="entropy-label" id="entropy-label"></div>
+    </div>
+    <div class="field">
+      <label for="create-password2">Confirm password</label>
+      <div class="pw-wrap">
+        <input type="password" id="create-password2" placeholder="type it again" autocomplete="new-password">
+        <button class="pw-toggle" type="button" onclick="togglePw('create-password2', this)">👁</button>
+      </div>
+    </div>
+    <div class="actions-bar">
+      <button class="btn" id="create-btn" onclick="handleCreateVault()">Create vault</button>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ SCREEN: UNLOCK ══════════════ -->
+<section id="screen-unlock" class="auth-screen screen">
+  <div class="auth-box">
+    <div class="welcome-brand" style="text-align:center;margin-bottom:4px;font-size:28px">TIJORI</div>
+    <p class="auth-sub" style="text-align:center">
+      <span id="unlock-folder-tag" class="folder-tag"></span>
+    </p>
+    <form onsubmit="handleUnlock();return false;">
+      <div class="field">
+        <label for="unlock-pass">Master password</label>
+        <div class="pw-wrap">
+          <input type="password" id="unlock-pass" placeholder="master password" autocomplete="current-password" autofocus>
+          <button class="pw-toggle" type="button" onclick="togglePw('unlock-pass', this)">👁</button>
+        </div>
+        <div class="hint" id="unlock-hint" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px;"></div>
+      </div>
+      <div class="actions-bar">
+        <button class="btn ghost btn-sm" type="button" onclick="handleOpenExisting()">Different folder</button>
+        <button class="btn" id="unlock-btn" type="submit">Unlock</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<!-- ══════════════ SCREEN: REGISTER DEVICE ══════════════ -->
+<section id="screen-register" class="auth-screen screen">
+  <div class="auth-box">
+    <button class="back-link" onclick="handleOpenExisting()">← Different folder</button>
+    <h2>Register this device <span id="register-folder-tag" class="folder-tag"></span></h2>
+    <p class="auth-sub">This vault hasn't been used in this browser before. Enter the master password to register.</p>
+    <div class="field">
+      <label for="register-device-label">Device name</label>
+      <input type="text" id="register-device-label" placeholder="e.g. Chirag's iPhone" autocomplete="off" maxlength="64">
+    </div>
+    <div class="field">
+      <label for="register-password">Master password</label>
+      <div class="pw-wrap">
+        <input type="password" id="register-password" placeholder="vault master password" autocomplete="current-password">
+        <button class="pw-toggle" type="button" onclick="togglePw('register-password', this)">👁</button>
+      </div>
+    </div>
+    <div class="actions-bar">
+      <button class="btn" id="register-btn" onclick="handleRegisterDevice()">Register device</button>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ SCREEN: VAULT (MAIN) ══════════════ -->
+<section id="screen-vault" class="screen">
+
+  <div class="topbar">
+    <span class="topbar-brand">TIJORI</span>
+    <span class="topbar-folder" id="topbar-folder"></span>
+    <div class="topbar-space"></div>
+    <div class="topbar-actions">
+      <button class="btn-icon" title="Help" onclick="showModal('modal-help')">?</button>
+      <button class="btn-icon" title="Settings" onclick="openSettings()">⚙</button>
+      <button class="btn secondary btn-sm" onclick="lock()">Lock</button>
+    </div>
+  </div>
+
+  <div class="vault-toolbar">
+    <div class="search-wrap">
+      <input type="search" id="search-input" placeholder="Search entries…"
+        oninput="handleSearch(this.value)"
+        onkeydown="if(event.key==='Escape'){handleSearch('');this.value=''}">
+      <button class="search-clear" id="search-clear" onclick="clearSearch()">✕</button>
+    </div>
+    <div class="filter-tabs">
+      <button class="filter-tab active" data-type="all" onclick="setFilter('all')">All</button>
+      <button class="filter-tab" data-type="login" onclick="setFilter('login')">Logins</button>
+      <button class="filter-tab" data-type="card" onclick="setFilter('card')">Cards</button>
+      <button class="filter-tab" data-type="note" onclick="setFilter('note')">Notes</button>
+    </div>
+    <button class="btn btn-sm" onclick="openEntryModal(null)">＋ Add</button>
+  </div>
+
+  <div class="entry-list" id="entry-list"></div>
+  <div class="vault-empty" id="vault-empty" style="display:none">
+    <h3>No entries</h3>
+    <p id="empty-msg">Add your first entry.</p>
+    <button class="btn" onclick="openEntryModal(null)">＋ Add entry</button>
+  </div>
+
+</section>
+</div><!-- /.app -->
+
+<!-- ══════════════ MODAL: ENTRY ADD/EDIT ══════════════ -->
+<div id="modal-entry" class="modal-bg">
+  <div class="modal">
+    <h3 id="modal-entry-title">New entry</h3>
+    <div class="tab-row" id="entry-tabs">
+      <button class="entry-tab-btn active" data-type="login" onclick="switchEntryTab('login')">🔑 Login</button>
+      <button class="entry-tab-btn" data-type="card" onclick="switchEntryTab('card')">💳 Card</button>
+      <button class="entry-tab-btn" data-type="note" onclick="switchEntryTab('note')">📝 Note</button>
+    </div>
+
+    <!-- Login pane -->
+    <div id="entry-pane-login" class="tab-pane entry-form-pane active" data-type="login">
+      <div class="field"><label>Title*</label><input id="login-title" placeholder="e.g. GitHub" autocomplete="off"></div>
+      <div class="field"><label>URL</label><input id="login-url" type="url" placeholder="https://" autocomplete="off"></div>
+      <div class="field"><label>Username / Email</label><input id="login-username" autocomplete="off"></div>
+      <div class="field">
+        <label>Password</label>
+        <div class="field-row">
+          <div class="pw-wrap" style="flex:1">
+            <input type="password" id="login-password" autocomplete="new-password" oninput="updateEntropyMeter(this.value,'login-entropy-bar','login-entropy-label')">
+            <button class="pw-toggle" type="button" onclick="togglePw('login-password',this)">👁</button>
+          </div>
+          <button class="btn secondary btn-sm" onclick="fillGenerated()" title="Generate password">⚙ Gen</button>
+        </div>
+        <div class="entropy-bar-wrap"><div class="entropy-bar" id="login-entropy-bar"></div></div>
+        <div class="entropy-label" id="login-entropy-label"></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea id="login-notes" rows="3"></textarea></div>
+    </div>
+
+    <!-- Card pane -->
+    <div id="entry-pane-card" class="tab-pane entry-form-pane" data-type="card">
+      <div class="field"><label>Label*</label><input id="card-label" placeholder="e.g. Visa ending 4242" autocomplete="off"></div>
+      <div class="field"><label>Cardholder name</label><input id="card-cardholder" autocomplete="off"></div>
+      <div class="field"><label>Card number</label><input id="card-number" placeholder="•••• •••• •••• ••••" autocomplete="off" maxlength="23" oninput="formatCardNumber(this)"></div>
+      <div style="display:flex;gap:10px">
+        <div class="field" style="flex:1"><label>Expiry (MM/YY)</label><input id="card-expiry" placeholder="MM/YY" maxlength="5" oninput="formatExpiry(this)" autocomplete="off"></div>
+        <div class="field" style="flex:1">
+          <label>CVV</label>
+          <div class="pw-wrap">
+            <input type="password" id="card-cvv" placeholder="•••" maxlength="4" autocomplete="off">
+            <button class="pw-toggle" type="button" onclick="togglePw('card-cvv',this)">👁</button>
+          </div>
+        </div>
+      </div>
+      <div class="field"><label>Notes</label><textarea id="card-notes" rows="3"></textarea></div>
+    </div>
+
+    <!-- Note pane -->
+    <div id="entry-pane-note" class="tab-pane entry-form-pane" data-type="note">
+      <div class="field"><label>Title*</label><input id="note-title" placeholder="e.g. WiFi credentials" autocomplete="off"></div>
+      <div class="field"><label>Body</label><textarea id="note-body" rows="6"></textarea></div>
+    </div>
+
+    <hr class="sep">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <button class="btn danger btn-sm" id="entry-delete-btn" style="display:none" onclick="deleteCurrentEntry()">Delete</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn ghost btn-sm" onclick="hideModal('modal-entry')">Cancel</button>
+        <button class="btn btn-sm" onclick="saveEntry()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: SETTINGS ══════════════ -->
+<div id="modal-settings" class="modal-bg">
+  <div class="modal modal-wide">
+    <h3>Settings</h3>
+    <div class="settings-tabs">
+      <button class="settings-tab-btn active" data-tab="vault" onclick="showSettingsTab('vault')">Vault</button>
+      <button class="settings-tab-btn" data-tab="devices" onclick="showSettingsTab('devices')">Devices</button>
+      <button class="settings-tab-btn" data-tab="security" onclick="showSettingsTab('security')">Security</button>
+      <button class="settings-tab-btn" data-tab="data" onclick="showSettingsTab('data')">Data</button>
+    </div>
+
+    <!-- Vault tab -->
+    <div class="settings-pane active" data-tab="vault">
+      <div class="field">
+        <label>Vault folder</label>
+        <div class="entry-detail-value"><span class="val" id="set-folder-name" style="font-family:var(--mono);font-size:13px"></span></div>
+      </div>
+      <div class="field">
+        <label>Entries</label>
+        <div class="entry-detail-value"><span class="val" id="set-count"></span></div>
+      </div>
+      <hr class="sep">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">
+        Sync is handled by your transport (cloud folder, Syncthing, Git, QR, or manual export).
+        Tijori merges new device log files automatically on unlock.
+      </p>
+      <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="handleIntegrityCheck()">Verify log integrity</button>
+    </div>
+
+    <!-- Devices tab -->
+    <div class="settings-pane" data-tab="devices">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 14px">
+        Each device that has ever written to this vault appears below.
+        Revoking a device invalidates all its future events.
+      </p>
+      <div id="device-list"></div>
+    </div>
+
+    <!-- Security tab -->
+    <div class="settings-pane" data-tab="security">
+      <div class="field">
+        <label for="set-idle">Idle timeout (seconds)</label>
+        <input type="number" id="set-idle" min="30" max="86400" value="300">
+        <div class="hint">Lock after this many seconds of inactivity.</div>
+      </div>
+      <div class="field">
+        <label for="set-clip">Clipboard clear (seconds)</label>
+        <input type="number" id="set-clip" min="5" max="300" value="30">
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="set-lock-hide" style="width:auto;margin:0" checked>
+        <label for="set-lock-hide" style="margin:0;cursor:pointer">Lock when tab is hidden</label>
+      </div>
+      <div style="margin-top:16px">
+        <button class="btn" onclick="saveSettings();toast('Settings saved.')">Save settings</button>
+      </div>
+    </div>
+
+    <!-- Data tab -->
+    <div class="settings-pane" data-tab="data">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Export a backup or import from another password manager.</p>
+      <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="exportEncryptedArchive()">Export encrypted archive (.tijori)</button>
+      <button class="btn ghost" style="width:100%;margin-bottom:16px;color:var(--warn);border-color:var(--warn)" onclick="confirmPlainExport()">Export plaintext JSON (⚠ unencrypted)</button>
+      <hr class="sep">
+      <button class="btn secondary" style="width:100%" onclick="hideModal('modal-settings');openImportModal()">Import from another manager</button>
+    </div>
+
+    <hr class="sep">
+    <div style="text-align:right">
+      <button class="btn ghost btn-sm" onclick="hideModal('modal-settings')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: IMPORT ══════════════ -->
+<div id="modal-import" class="modal-bg">
+  <div class="modal modal-wide">
+    <h3>Import entries</h3>
+    <div class="import-format-grid" id="import-format-grid">
+      <button class="import-format-btn selected" data-fmt="bitwarden" onclick="selectImportFmt(this)">
+        <div class="fmt-name">Bitwarden</div>
+        <div class="fmt-desc">Unencrypted JSON export</div>
+      </button>
+      <button class="import-format-btn" data-fmt="chrome" onclick="selectImportFmt(this)">
+        <div class="fmt-name">Chrome / Edge</div>
+        <div class="fmt-desc">CSV password export</div>
+      </button>
+      <button class="import-format-btn" data-fmt="1password" onclick="selectImportFmt(this)">
+        <div class="fmt-name">1Password</div>
+        <div class="fmt-desc">CSV export</div>
+      </button>
+      <button class="import-format-btn" data-fmt="tijori" onclick="selectImportFmt(this)">
+        <div class="fmt-name">Tijori archive</div>
+        <div class="fmt-desc">Restore .tijori backup</div>
+      </button>
+      <button class="import-format-btn" data-fmt="generic" onclick="selectImportFmt(this)">
+        <div class="fmt-name">Generic CSV</div>
+        <div class="fmt-desc">Map columns manually</div>
+      </button>
+    </div>
+
+    <!-- Generic CSV column mapper (shown only for generic) -->
+    <div id="csv-mapper" style="display:none;margin-bottom:14px">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Map CSV columns to fields:</p>
+      <div class="csv-map-row"><label>Title</label><select id="map-title"></select></div>
+      <div class="csv-map-row"><label>URL</label><select id="map-url"></select></div>
+      <div class="csv-map-row"><label>Username</label><select id="map-username"></select></div>
+      <div class="csv-map-row"><label>Password</label><select id="map-password"></select></div>
+      <div class="csv-map-row"><label>Notes</label><select id="map-notes"></select></div>
+    </div>
+
+    <div class="field">
+      <label>Select file</label>
+      <input type="file" id="import-file" accept=".json,.csv,.tijori,.jsonl" onchange="handleImportFileChange(this.files[0])">
+    </div>
+
+    <div id="import-preview" style="display:none;margin-top:10px">
+      <div style="color:var(--ok);font-size:13px;margin-bottom:10px" id="import-preview-count"></div>
+      <button class="btn" onclick="confirmImport()">Import all</button>
+    </div>
+
+    <hr class="sep">
+    <div style="text-align:right">
+      <button class="btn ghost btn-sm" onclick="hideModal('modal-import')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: INTEGRITY CHECK ══════════════ -->
+<div id="modal-integrity" class="modal-bg">
+  <div class="modal">
+    <h3>Log integrity</h3>
+    <div id="integrity-summary" style="font-size:15px;font-weight:600;margin-bottom:14px"></div>
+    <div id="integrity-results"></div>
+    <hr class="sep">
+    <div style="text-align:right">
+      <button class="btn ghost btn-sm" onclick="hideModal('modal-integrity')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: CONFIRM ══════════════ -->
+<div id="modal-confirm" class="modal-bg">
+  <div class="modal">
+    <h3 id="confirm-title"></h3>
+    <p id="confirm-message"></p>
+    <div class="actions-bar">
+      <button class="btn ghost btn-sm" onclick="resolveConfirm(false)">Cancel</button>
+      <button class="btn btn-sm" id="confirm-ok" onclick="resolveConfirm(true)">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: HELP ══════════════ -->
+<div id="modal-help" class="modal-bg">
+  <div class="modal modal-wide">
+    <h3>Tijori — Help</h3>
+    <div class="tab-row" style="margin-bottom:14px">
+      <button class="active" onclick="switchHelpTab('about',this)">About</button>
+      <button onclick="switchHelpTab('usage',this)">Usage</button>
+      <button onclick="switchHelpTab('sync',this)">Sync</button>
+      <button onclick="switchHelpTab('format',this)">Format</button>
+    </div>
+    <div id="help-about" class="help-body tab-pane active">
+      <h4>What is this?</h4>
+      <p>Tijori (तिजोरी, "strongbox") is a browser-native password manager. Your vault is a folder on your disk. Sync is your choice of transport. Nothing leaves the folder except what you explicitly export.</p>
+      <h4>Guarantees</h4>
+      <ul>
+        <li>Zero outbound network requests after page load — open DevTools and verify.</li>
+        <li>Master password never leaves your browser tab.</li>
+        <li>Derived key is held in memory only while unlocked, zeroed on lock.</li>
+        <li>Source is one HTML file. Download it and run it offline forever.</li>
+      </ul>
+      <h4>Not protected against</h4>
+      <ul>
+        <li>Malware on your device, keyloggers, physical coercion.</li>
+        <li>A weak master password (entropy estimate is shown, not enforced beyond 20 bits).</li>
+      </ul>
+      <h4>Part of the NakliTechie series</h4>
+      <p>Tijori is a sibling of <a href="https://rotor.naklitechie.com" style="color:var(--accent)">Rotor</a> (TOTP). They share the same crypto primitives.</p>
+    </div>
+    <div id="help-usage" class="help-body tab-pane">
+      <h4>Create a vault</h4>
+      <p>Click <strong>Create new vault</strong>, pick an empty folder, set a device name and master password. The vault is ready.</p>
+      <h4>Add entries</h4>
+      <p>Click <strong>＋ Add</strong> in the vault view. Choose Login, Card, or Note. The entry is encrypted and appended to your device's log stream immediately.</p>
+      <h4>Copy a password</h4>
+      <p>Click ⎘ on any login row to copy its password. The clipboard self-clears after the configured timeout.</p>
+      <h4>Search</h4>
+      <p>Type in the search box to filter entries live. Press <span class="kbd">/</span> to focus search from anywhere. <span class="kbd">Esc</span> clears and closes modals.</p>
+      <h4>Keyboard shortcuts</h4>
+      <ul>
+        <li><span class="kbd">/</span> — focus search</li>
+        <li><span class="kbd">Ctrl+N</span> / <span class="kbd">⌘N</span> — new entry</li>
+        <li><span class="kbd">Esc</span> — close modal / clear search</li>
+      </ul>
+    </div>
+    <div id="help-sync" class="help-body tab-pane">
+      <h4>How sync works</h4>
+      <p>Each device writes only its own log file (<code>tijori-events-&lt;deviceId&gt;.jsonl</code>). Sync is the act of making all devices see all files. Tijori merges them on every unlock — deterministically, regardless of order.</p>
+      <h4>Cloud folder (easiest)</h4>
+      <p>Put the vault folder inside iCloud Drive, Dropbox, Google Drive, etc. Each device running Tijori points at its local copy. The cloud provider syncs files; Tijori merges on unlock.</p>
+      <h4>Syncthing (no cloud)</h4>
+      <p>Point Syncthing at the vault folder across devices. P2P, no cloud vendor.</p>
+      <h4>Git</h4>
+      <p>Commit and push. Each device's log stream is a separate file, so <code>git merge</code> never conflicts on event logs (only if two devices edit the same file directly, which Tijori never does).</p>
+      <h4>Manual / USB</h4>
+      <p>Use <em>Settings → Data → Export encrypted archive</em> to pack the vault. Import it on another device via <em>Import → Tijori archive</em>.</p>
+      <h4>Register a second device</h4>
+      <p>Open the vault folder from the second browser. Tijori detects the new device, asks for the master password, emits a <code>device_registered</code> event, and merges.</p>
+    </div>
+    <div id="help-format" class="help-body tab-pane">
+      <h4>Vault folder</h4>
+      <ul>
+        <li><code>tijori-meta.json</code> — plaintext: KDF params, device roster.</li>
+        <li><code>tijori-events-&lt;deviceId&gt;.jsonl</code> — one file per device. Append-only, SHA-256 hash-chained.</li>
+      </ul>
+      <h4>Event line</h4>
+      <p><code>{"seq":1,"prev_hash":"genesis","ts":"…","device_id":"…","event_type":"entry_created","payload_ct":"…","nonce":"…"}</code></p>
+      <h4>Crypto</h4>
+      <ul>
+        <li>KDF: PBKDF2-SHA-256, 600 000 iterations.</li>
+        <li>Per-event encryption: AES-256-GCM, random 12-byte nonce.</li>
+        <li>Hash chain: SHA-256 over previous raw line string.</li>
+      </ul>
+      <h4>Merge</h4>
+      <p>Union all events, sort by <code>(ts, device_id)</code>, apply in order. Per-field last-writer-wins — each field carries its own timestamp, so two devices editing different fields of the same entry both win their field.</p>
+    </div>
+    <hr class="sep">
+    <div style="text-align:right">
+      <button class="btn ghost btn-sm" onclick="hideModal('modal-help')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Footer nav -->
+<div class="footer-nav">
+  <a href="https://naklitechie.github.io/">⬅ More Projects</a>
+  <a href="https://github.com/NakliTechie/Tijori">⌨ Source</a>
+</div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════
+// UTILITIES
+// ══════════════════════════════════════════════════════════
+
+function b64e(buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+function b64d(s) {
+  const raw = atob(s);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+function uuid() {
+  return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
+    (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
+  );
+}
+function nowISO() { return new Date().toISOString(); }
+async function sha256b64(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return b64e(new Uint8Array(buf));
+}
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function $(id) { return document.getElementById(id); }
+
+// ══════════════════════════════════════════════════════════
+// CRYPTO
+// ══════════════════════════════════════════════════════════
+
+const KDF_ITER = 600000;
+
+async function deriveKey(password, salt) {
+  const raw = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password),
+    { name: 'PBKDF2' }, false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: KDF_ITER, hash: 'SHA-256' },
+    raw,
+    { name: 'AES-GCM', length: 256 },
+    false, ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptPayload(key, obj) {
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const plain = new TextEncoder().encode(JSON.stringify(obj));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, plain);
+  return { payload_ct: b64e(new Uint8Array(ct)), nonce: b64e(nonce) };
+}
+
+async function decryptPayload(key, payload_ct, nonce_b64) {
+  const ct = b64d(payload_ct);
+  const iv = b64d(nonce_b64);
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// ══════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════
+
+const S = {
+  key: null,
+  salt: null,           // Uint8Array
+  dirHandle: null,
+  meta: null,
+  deviceId: null,
+  deviceLabel: null,
+  entries: new Map(),   // id → entry
+  filterType: 'all',
+  searchQuery: '',
+  idleTimer: null,
+  clipTimers: {},
+  _pendingHandle: null,
+  settings: { idleTimeout: 300, clipClear: 30, lockOnHide: true }
+};
+
+// ══════════════════════════════════════════════════════════
+// IDB  (dirHandle persistence — Chrome only, silent fallback)
+// ══════════════════════════════════════════════════════════
+
+let _db = null;
+async function getDB() {
+  if (_db) return _db;
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('tijori-v1', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => { _db = req.result; res(_db); };
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idbGet(k) {
+  try {
+    const db = await getDB();
+    return new Promise((res, rej) => {
+      const r = db.transaction('kv').objectStore('kv').get(k);
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  } catch { return undefined; }
+}
+async function idbSet(k, v) {
+  try {
+    const db = await getDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(v, k);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  } catch {}
+}
+
+// ══════════════════════════════════════════════════════════
+// FILE SYSTEM
+// ══════════════════════════════════════════════════════════
+
+async function readFileText(dir, name) {
+  try {
+    const fh = await dir.getFileHandle(name);
+    return await (await fh.getFile()).text();
+  } catch { return null; }
+}
+async function writeFileText(dir, name, text) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(text); await w.close();
+}
+async function readMeta(dir) {
+  const t = await readFileText(dir, 'tijori-meta.json');
+  if (!t) return null;
+  try { return JSON.parse(t); } catch { return null; }
+}
+async function writeMeta(dir, meta) {
+  await writeFileText(dir, 'tijori-meta.json', JSON.stringify(meta, null, 2));
+}
+async function getAllStreamNames(dir) {
+  const names = [];
+  for await (const [name] of dir.entries()) {
+    if (name.startsWith('tijori-events-') && name.endsWith('.jsonl')) names.push(name);
+  }
+  return names;
+}
+async function readStream(dir, deviceId) {
+  const t = await readFileText(dir, `tijori-events-${deviceId}.jsonl`);
+  if (!t) return [];
+  return t.split('\n').filter(l => l.trim());
+}
+async function appendLineToStream(dir, deviceId, line) {
+  const existing = await readFileText(dir, `tijori-events-${deviceId}.jsonl`) ?? '';
+  await writeFileText(dir, `tijori-events-${deviceId}.jsonl`, existing + line + '\n');
+}
+
+// ══════════════════════════════════════════════════════════
+// EVENT LOG
+// ══════════════════════════════════════════════════════════
+
+async function appendEvent(type, payloadObj) {
+  const { payload_ct, nonce } = await encryptPayload(S.key, payloadObj);
+  const lines = await readStream(S.dirHandle, S.deviceId);
+  const prevHash = lines.length > 0 ? await sha256b64(lines[lines.length - 1]) : 'genesis';
+  const event = {
+    seq: lines.length + 1,
+    prev_hash: prevHash,
+    ts: nowISO(),
+    device_id: S.deviceId,
+    event_type: type,
+    payload_ct,
+    nonce
+  };
+  const line = JSON.stringify(event);
+  await appendLineToStream(S.dirHandle, S.deviceId, line);
+  return line;
+}
+
+// ══════════════════════════════════════════════════════════
+// MERGE
+// ══════════════════════════════════════════════════════════
+
+async function loadAndMerge() {
+  const streamNames = await getAllStreamNames(S.dirHandle);
+  const allEvents = [];
+
+  for (const name of streamNames) {
+    const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
+    const lines = await readStream(S.dirHandle, deviceId);
+    for (const line of lines) {
+      try { allEvents.push({ ...JSON.parse(line), _raw: line }); } catch {}
+    }
+  }
+
+  // Deterministic order: (ts, device_id)
+  allEvents.sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 :
+    a.device_id < b.device_id ? -1 : a.device_id > b.device_id ? 1 : 0);
+
+  // First pass: collect revocations
+  const revocations = {}; // deviceId → revoked_at ISO
+  for (const ev of allEvents) {
+    if (ev.event_type !== 'device_revoked') continue;
+    try {
+      const p = await decryptPayload(S.key, ev.payload_ct, ev.nonce);
+      if (!revocations[p.device_id] || p.revoked_at > revocations[p.device_id]) {
+        revocations[p.device_id] = p.revoked_at;
+      }
+    } catch {}
+  }
+
+  // Second pass: apply events
+  const entries = new Map();
+  for (const ev of allEvents) {
+    const revAt = revocations[ev.device_id];
+    if (revAt && ev.ts > revAt) continue;
+
+    let p;
+    try { p = await decryptPayload(S.key, ev.payload_ct, ev.nonce); } catch { continue; }
+
+    if (ev.event_type === 'entry_created') {
+      if (!entries.has(p.id)) {
+        entries.set(p.id, { id: p.id, type: p.type, deleted: false, deleted_at: null, fields: p.fields });
+      } else {
+        // Apply per-field LWW, un-delete if newer
+        const ex = entries.get(p.id);
+        for (const [k, f] of Object.entries(p.fields)) {
+          if (!ex.fields[k] || f.ts > ex.fields[k].ts) ex.fields[k] = f;
+        }
+        if (ex.deleted && ev.ts > ex.deleted_at) { ex.deleted = false; ex.deleted_at = null; }
+      }
+    } else if (ev.event_type === 'entry_updated') {
+      const ex = entries.get(p.id);
+      if (!ex) continue;
+      for (const [k, f] of Object.entries(p.fields)) {
+        if (!ex.fields[k] || f.ts > ex.fields[k].ts) ex.fields[k] = f;
+      }
+      if (ex.deleted && ev.ts > ex.deleted_at) { ex.deleted = false; ex.deleted_at = null; }
+    } else if (ev.event_type === 'entry_deleted') {
+      const ex = entries.get(p.id);
+      if (ex && (!ex.deleted_at || p.deleted_at > ex.deleted_at)) {
+        ex.deleted = true; ex.deleted_at = p.deleted_at;
+      }
+    }
+  }
+
+  S.entries = new Map();
+  for (const [id, e] of entries) {
+    if (!e.deleted) S.entries.set(id, e);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// INTEGRITY CHECK
+// ══════════════════════════════════════════════════════════
+
+async function verifyAllChains() {
+  const streamNames = await getAllStreamNames(S.dirHandle);
+  const results = [];
+  for (const name of streamNames) {
+    const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
+    const lines = await readStream(S.dirHandle, deviceId);
+    let ok = true; let error = null;
+    for (let i = 0; i < lines.length; i++) {
+      let ev;
+      try { ev = JSON.parse(lines[i]); } catch { ok = false; error = `Malformed JSON at line ${i + 1}`; break; }
+      const expected = i === 0 ? 'genesis' : await sha256b64(lines[i - 1]);
+      if (ev.prev_hash !== expected) {
+        ok = false;
+        error = `Hash mismatch at event ${ev.seq ?? i + 1} — possible tamper`;
+        break;
+      }
+    }
+    results.push({ deviceId, name, lines: lines.length, ok, error });
+  }
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════
+// VAULT OPERATIONS
+// ══════════════════════════════════════════════════════════
+
+async function createVault(dirHandle, password, deviceLabel) {
+  if (!S.deviceId) { S.deviceId = uuid(); localStorage.setItem('tijori.deviceId', S.deviceId); }
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveKey(password, salt);
+  const meta = {
+    format: 'tijori-v1',
+    kdf: { algorithm: 'PBKDF2', hash: 'SHA-256', iterations: KDF_ITER, salt: b64e(salt) },
+    devices: [{ id: S.deviceId, label: deviceLabel, registered_at: nowISO() }]
+  };
+  await writeMeta(dirHandle, meta);
+  S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
+  S.deviceLabel = deviceLabel;
+  localStorage.setItem('tijori.deviceLabel', deviceLabel);
+  await idbSet('dirHandle', dirHandle);
+  await appendEvent('device_registered', { device_id: S.deviceId, label: deviceLabel });
+  S.entries = new Map();
+}
+
+async function unlockVault(dirHandle, password) {
+  const meta = await readMeta(dirHandle);
+  if (!meta) throw new Error('No vault found in this folder.');
+  const salt = b64d(meta.kdf.salt);
+  const key = await deriveKey(password, salt);
+
+  // Verify key against first available event
+  const streamNames = await getAllStreamNames(dirHandle);
+  if (streamNames.length === 0) throw new Error('No event streams found in vault.');
+  for (const name of streamNames) {
+    const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
+    const lines = await readStream(dirHandle, deviceId);
+    if (!lines.length) continue;
+    const ev = JSON.parse(lines[0]);
+    try { await decryptPayload(key, ev.payload_ct, ev.nonce); break; }
+    catch { throw new Error('Wrong master password.'); }
+  }
+
+  S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
+  if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
+  if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
+  await idbSet('dirHandle', dirHandle);
+  await loadAndMerge();
+  const saved = localStorage.getItem('tijori.settings');
+  if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
+}
+
+async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
+  const meta = await readMeta(dirHandle);
+  if (!meta) throw new Error('Not a Tijori vault.');
+  const salt = b64d(meta.kdf.salt);
+  const key = await deriveKey(password, salt);
+
+  // Verify key
+  const streamNames = await getAllStreamNames(dirHandle);
+  for (const name of streamNames) {
+    const did = name.replace('tijori-events-', '').replace('.jsonl', '');
+    const lines = await readStream(dirHandle, did);
+    if (!lines.length) continue;
+    const ev = JSON.parse(lines[0]);
+    try { await decryptPayload(key, ev.payload_ct, ev.nonce); break; }
+    catch { throw new Error('Wrong master password.'); }
+  }
+
+  S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
+  S.deviceId = deviceId; S.deviceLabel = deviceLabel;
+  localStorage.setItem('tijori.deviceId', deviceId);
+  localStorage.setItem('tijori.deviceLabel', deviceLabel);
+
+  meta.devices.push({ id: deviceId, label: deviceLabel, registered_at: nowISO() });
+  await writeMeta(dirHandle, meta);
+  await idbSet('dirHandle', dirHandle);
+  await appendEvent('device_registered', { device_id: deviceId, label: deviceLabel });
+  await loadAndMerge();
+  const saved = localStorage.getItem('tijori.settings');
+  if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
+}
+
+// ══════════════════════════════════════════════════════════
+// SESSION
+// ══════════════════════════════════════════════════════════
+
+function lock() {
+  S.key = null; S.salt = null; S.entries = new Map();
+  Object.values(S.clipTimers).forEach(t => clearTimeout(t));
+  S.clipTimers = {};
+  clearTimeout(S.idleTimer);
+  $('unlock-folder-tag').textContent = S.dirHandle?.name ?? '';
+  $('unlock-hint').textContent = '';
+  $('unlock-pass').value = '';
+  hideAllModals();
+  showScreen('unlock');
+}
+
+function resetIdleTimer() {
+  clearTimeout(S.idleTimer);
+  if (!S.key) return;
+  S.idleTimer = setTimeout(lock, S.settings.idleTimeout * 1000);
+}
+
+['mousemove', 'keydown', 'click', 'touchstart'].forEach(ev =>
+  document.addEventListener(ev, resetIdleTimer, { passive: true })
+);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && S.settings.lockOnHide && S.key) lock();
+});
+
+// ══════════════════════════════════════════════════════════
+// CLIPBOARD
+// ══════════════════════════════════════════════════════════
+
+async function copyField(text, timerKey) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = Object.assign(document.createElement('textarea'),
+      { value: text, style: 'position:fixed;left:-9999px' });
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+  toast('Copied — clears in ' + S.settings.clipClear + 's');
+  clearTimeout(S.clipTimers[timerKey]);
+  S.clipTimers[timerKey] = setTimeout(() =>
+    navigator.clipboard.writeText('').catch(() => {}), S.settings.clipClear * 1000);
+}
+
+async function copyEntryField(entryId, fieldKey, e) {
+  if (e) e.stopPropagation();
+  const entry = S.entries.get(entryId);
+  if (!entry) return;
+  const val = fv(entry, fieldKey);
+  if (!val) { toast('Field is empty.'); return; }
+  await copyField(val, `${entryId}:${fieldKey}`);
+}
+
+// ══════════════════════════════════════════════════════════
+// PASSWORD GENERATOR + ENTROPY
+// ══════════════════════════════════════════════════════════
+
+function generatePassword({ len = 20, lower = true, upper = true, digits = true, sym = true } = {}) {
+  const chars = [
+    lower ? 'abcdefghijklmnopqrstuvwxyz' : '',
+    upper ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' : '',
+    digits ? '0123456789' : '',
+    sym ? '!@#$%^&*()_+-=[]{}|;:,.?' : ''
+  ].join('');
+  if (!chars) return '';
+  const arr = crypto.getRandomValues(new Uint32Array(len));
+  return Array.from(arr, v => chars[v % chars.length]).join('');
+}
+
+function estimateEntropy(pw) {
+  if (!pw) return 0;
+  let cs = 0;
+  if (/[a-z]/.test(pw)) cs += 26;
+  if (/[A-Z]/.test(pw)) cs += 26;
+  if (/[0-9]/.test(pw)) cs += 10;
+  if (/[^a-zA-Z0-9]/.test(pw)) cs += 32;
+  return cs ? Math.floor(pw.length * Math.log2(cs)) : 0;
+}
+
+function updateEntropyMeter(pw, barId = 'entropy-bar', labelId = 'entropy-label') {
+  const bits = estimateEntropy(pw);
+  const bar = $(barId); const lbl = $(labelId);
+  if (!bar || !lbl) return;
+  let pct, color, text;
+  if (!pw)      { pct = 0;  color = 'var(--border)'; text = ''; }
+  else if (bits < 30) { pct = 15; color = 'var(--danger)'; text = `~${bits} bits — weak`; }
+  else if (bits < 50) { pct = 40; color = 'var(--warn)';   text = `~${bits} bits — fair`; }
+  else if (bits < 70) { pct = 65; color = '#4caf50';        text = `~${bits} bits — good`; }
+  else                { pct = 95; color = 'var(--ok)';      text = `~${bits} bits — strong`; }
+  bar.style.width = pct + '%'; bar.style.background = color;
+  lbl.textContent = text; lbl.style.color = color;
+}
+
+function fillGenerated() {
+  const pw = generatePassword();
+  $('login-password').value = pw;
+  $('login-password').type = 'text';
+  updateEntropyMeter(pw, 'login-entropy-bar', 'login-entropy-label');
+}
+
+// ══════════════════════════════════════════════════════════
+// FIELD HELPERS
+// ══════════════════════════════════════════════════════════
+
+function fv(entry, key) { return entry?.fields?.[key]?.v ?? ''; }
+
+function entryIcon(type) {
+  return type === 'login' ? '🔑' : type === 'card' ? '💳' : '📝';
+}
+
+function entrySubtitle(entry) {
+  if (entry.type === 'login') return fv(entry, 'username') || fv(entry, 'url');
+  if (entry.type === 'card') {
+    const n = fv(entry, 'number').replace(/\s/g, '');
+    return n ? '•••• ' + n.slice(-4) : fv(entry, 'cardholder');
+  }
+  const body = fv(entry, 'body');
+  return body.length > 60 ? body.slice(0, 60) + '…' : body;
+}
+
+function entryTitle(entry) {
+  return fv(entry, 'title') || fv(entry, 'label') || '(no title)';
+}
+
+// ══════════════════════════════════════════════════════════
+// UI — SCREENS & MODALS
+// ══════════════════════════════════════════════════════════
+
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  const el = $('screen-' + name);
+  if (el) el.classList.add('active');
+  if (name === 'vault') { renderTopbar(); renderEntryList(); resetIdleTimer(); }
+  if (name === 'unlock') setTimeout(() => $('unlock-pass')?.focus(), 60);
+}
+
+function showModal(id) { $(id)?.classList.add('active'); }
+function hideModal(id) { $(id)?.classList.remove('active'); }
+function hideAllModals() {
+  document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('active'));
+}
+
+function toast(msg, { error = false, dur = 2500 } = {}) {
+  let t = $('toast-el');
+  if (!t) {
+    t = document.createElement('div'); t.id = 'toast-el';
+    t.style.cssText = 'position:fixed;bottom:60px;left:50%;transform:translateX(-50%) translateY(0);background:var(--text);color:var(--bg);padding:8px 16px;border-radius:20px;font-size:13px;z-index:9999;pointer-events:none;white-space:nowrap;transition:opacity .2s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background = error ? 'var(--danger)' : 'var(--text)';
+  t.style.color = error ? '#fff' : 'var(--bg)';
+  t.style.opacity = '1';
+  clearTimeout(t._t);
+  t._t = setTimeout(() => { t.style.opacity = '0'; }, dur);
+}
+
+// ══════════════════════════════════════════════════════════
+// UI — VAULT RENDER
+// ══════════════════════════════════════════════════════════
+
+function renderTopbar() {
+  $('topbar-folder').textContent = S.dirHandle?.name ?? 'vault';
+}
+
+function getFilteredEntries() {
+  const q = S.searchQuery.toLowerCase();
+  const out = [];
+  for (const e of S.entries.values()) {
+    if (S.filterType !== 'all' && e.type !== S.filterType) continue;
+    if (q) {
+      const hay = [
+        fv(e, 'title'), fv(e, 'username'), fv(e, 'url'), fv(e, 'notes'),
+        fv(e, 'label'), fv(e, 'cardholder'), fv(e, 'body')
+      ].join(' ').toLowerCase();
+      if (!hay.includes(q)) continue;
+    }
+    out.push(e);
+  }
+  out.sort((a, b) => {
+    const ta = entryTitle(a).toLowerCase();
+    const tb = entryTitle(b).toLowerCase();
+    return ta < tb ? -1 : ta > tb ? 1 : 0;
+  });
+  return out;
+}
+
+function renderEntryList() {
+  const entries = getFilteredEntries();
+  const list = $('entry-list');
+  const empty = $('vault-empty');
+  if (!entries.length) {
+    list.innerHTML = '';
+    empty.style.display = '';
+    $('empty-msg').textContent = S.searchQuery ? 'No entries match your search.' : 'Add your first entry.';
+    return;
+  }
+  empty.style.display = 'none';
+  list.innerHTML = entries.map(e => {
+    const title = entryTitle(e);
+    const sub = entrySubtitle(e);
+    const hasCopy = (e.type === 'login' && fv(e, 'password')) || (e.type === 'card' && fv(e, 'number'));
+    const copyField = e.type === 'card' ? 'number' : 'password';
+    return `<div class="entry-item" onclick="openEntryModal('${e.id}')">
+      <div class="entry-icon">${entryIcon(e.type)}</div>
+      <div class="entry-info">
+        <div class="entry-title">${escHtml(title)}</div>
+        ${sub ? `<div class="entry-sub">${escHtml(sub)}</div>` : ''}
+      </div>
+      ${hasCopy ? `<button class="copy-btn" title="Copy" onclick="copyEntryField('${e.id}','${copyField}',event)">⎘</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function handleSearch(q) {
+  S.searchQuery = q;
+  $('search-clear').classList.toggle('show', !!q);
+  renderEntryList();
+}
+
+function clearSearch() {
+  S.searchQuery = '';
+  $('search-input').value = '';
+  $('search-clear').classList.remove('show');
+  renderEntryList();
+}
+
+function setFilter(type) {
+  S.filterType = type;
+  document.querySelectorAll('.filter-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.type === type));
+  renderEntryList();
+}
+
+// ══════════════════════════════════════════════════════════
+// UI — ENTRY MODAL
+// ══════════════════════════════════════════════════════════
+
+function switchEntryTab(type) {
+  document.querySelectorAll('.entry-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+  document.querySelectorAll('.entry-form-pane').forEach(p => p.classList.toggle('active', p.dataset.type === type));
+  updateEntropyMeter('', 'login-entropy-bar', 'login-entropy-label');
+}
+
+function openEntryModal(id) {
+  const entry = id ? S.entries.get(id) : null;
+  S._editingId = id || null;
+
+  // Reset tabs and fields
+  clearEntryForm();
+  const type = entry?.type || 'login';
+  document.querySelectorAll('.entry-tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.type === type);
+    b.disabled = !!entry && b.dataset.type !== type; // lock type when editing
+  });
+  document.querySelectorAll('.entry-form-pane').forEach(p =>
+    p.classList.toggle('active', p.dataset.type === type));
+
+  $('modal-entry-title').textContent = entry ? 'Edit entry' : 'New entry';
+  $('entry-delete-btn').style.display = entry ? '' : 'none';
+
+  if (entry) {
+    if (type === 'login') {
+      $('login-title').value = fv(entry, 'title');
+      $('login-url').value = fv(entry, 'url');
+      $('login-username').value = fv(entry, 'username');
+      $('login-password').value = fv(entry, 'password');
+      $('login-notes').value = fv(entry, 'notes');
+      updateEntropyMeter(fv(entry, 'password'), 'login-entropy-bar', 'login-entropy-label');
+    } else if (type === 'card') {
+      $('card-label').value = fv(entry, 'label');
+      $('card-cardholder').value = fv(entry, 'cardholder');
+      $('card-number').value = fv(entry, 'number');
+      $('card-expiry').value = fv(entry, 'expiry');
+      $('card-cvv').value = fv(entry, 'cvv');
+      $('card-notes').value = fv(entry, 'notes');
+    } else {
+      $('note-title').value = fv(entry, 'title');
+      $('note-body').value = fv(entry, 'body');
+    }
+  }
+
+  showModal('modal-entry');
+}
+
+function clearEntryForm() {
+  ['login-title','login-url','login-username','login-password','login-notes',
+   'card-label','card-cardholder','card-number','card-expiry','card-cvv','card-notes',
+   'note-title','note-body'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  const pw = $('login-password');
+  if (pw) pw.type = 'password';
+  updateEntropyMeter('', 'login-entropy-bar', 'login-entropy-label');
+}
+
+async function saveEntry() {
+  const activePaneEl = document.querySelector('.entry-form-pane.active');
+  if (!activePaneEl) return;
+  const type = activePaneEl.dataset.type;
+  const ts = nowISO();
+  const isNew = !S._editingId;
+  const id = isNew ? uuid() : S._editingId;
+  const existing = isNew ? null : S.entries.get(id);
+
+  let fields = {};
+  if (type === 'login') {
+    const title = $('login-title').value.trim();
+    if (!title) { toast('Title is required.', { error: true }); return; }
+    fields = {
+      title: { v: title, ts },
+      url: { v: $('login-url').value.trim(), ts },
+      username: { v: $('login-username').value.trim(), ts },
+      password: { v: $('login-password').value, ts },
+      notes: { v: $('login-notes').value.trim(), ts }
+    };
+  } else if (type === 'card') {
+    const label = $('card-label').value.trim();
+    if (!label) { toast('Label is required.', { error: true }); return; }
+    fields = {
+      label: { v: label, ts },
+      cardholder: { v: $('card-cardholder').value.trim(), ts },
+      number: { v: $('card-number').value.replace(/\s/g, ''), ts },
+      expiry: { v: $('card-expiry').value.trim(), ts },
+      cvv: { v: $('card-cvv').value, ts },
+      notes: { v: $('card-notes').value.trim(), ts }
+    };
+  } else {
+    const title = $('note-title').value.trim();
+    if (!title) { toast('Title is required.', { error: true }); return; }
+    fields = {
+      title: { v: title, ts },
+      body: { v: $('note-body').value, ts }
+    };
+  }
+
+  if (isNew) {
+    await appendEvent('entry_created', { id, type, fields });
+  } else {
+    // Only emit changed fields to keep the event log lean
+    const changed = {};
+    for (const [k, f] of Object.entries(fields)) {
+      if (fv(existing, k) !== f.v) changed[k] = f;
+    }
+    if (!Object.keys(changed).length) { hideModal('modal-entry'); return; }
+    await appendEvent('entry_updated', { id, type, fields: changed });
+  }
+
+  await loadAndMerge();
+  renderEntryList(); renderTopbar();
+  hideModal('modal-entry');
+  toast(isNew ? 'Entry saved.' : 'Entry updated.');
+}
+
+async function deleteCurrentEntry() {
+  const id = S._editingId;
+  if (!id) return;
+  const title = entryTitle(S.entries.get(id) ?? {});
+  const ok = await confirmDialog(`Delete "${escHtml(title)}"?`, 'This cannot be undone.', 'Delete', true);
+  if (!ok) return;
+  await appendEvent('entry_deleted', { id, deleted_at: nowISO() });
+  await loadAndMerge();
+  renderEntryList(); renderTopbar();
+  hideModal('modal-entry');
+  toast('Entry deleted.');
+}
+
+// ══════════════════════════════════════════════════════════
+// IN-APP CONFIRM
+// ══════════════════════════════════════════════════════════
+
+let _confirmResolve = null;
+
+function confirmDialog(title, msg, okLabel = 'Confirm', danger = false) {
+  $('confirm-title').textContent = title;
+  $('confirm-message').textContent = msg;
+  $('confirm-ok').textContent = okLabel;
+  $('confirm-ok').className = 'btn btn-sm' + (danger ? ' danger' : '');
+  showModal('modal-confirm');
+  return new Promise(res => { _confirmResolve = res; });
+}
+
+function resolveConfirm(val) {
+  hideModal('modal-confirm');
+  if (_confirmResolve) { _confirmResolve(val); _confirmResolve = null; }
+}
+
+// ══════════════════════════════════════════════════════════
+// SETTINGS
+// ══════════════════════════════════════════════════════════
+
+function openSettings() {
+  $('set-folder-name').textContent = S.dirHandle?.name ?? '';
+  $('set-count').textContent = S.entries.size + ' entries';
+  $('set-idle').value = S.settings.idleTimeout;
+  $('set-clip').value = S.settings.clipClear;
+  $('set-lock-hide').checked = S.settings.lockOnHide;
+  showSettingsTab('vault');
+  renderDeviceRoster();
+  showModal('modal-settings');
+}
+
+function showSettingsTab(tab) {
+  document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.settings-pane').forEach(p => p.classList.toggle('active', p.dataset.tab === tab));
+}
+
+function saveSettings() {
+  S.settings.idleTimeout = Math.max(30, parseInt($('set-idle').value) || 300);
+  S.settings.clipClear = Math.max(5, parseInt($('set-clip').value) || 30);
+  S.settings.lockOnHide = $('set-lock-hide').checked;
+  localStorage.setItem('tijori.settings', JSON.stringify(S.settings));
+  resetIdleTimer();
+}
+
+function renderDeviceRoster() {
+  const list = $('device-list');
+  if (!list || !S.meta?.devices) return;
+  list.innerHTML = S.meta.devices.map(d => `
+    <div class="device-item">
+      <div>
+        <div class="device-name">${escHtml(d.label)}${d.id === S.deviceId ? '<span class="badge">this device</span>' : ''}</div>
+        <div class="device-id">${d.id.slice(0, 12)}… · ${(d.registered_at ?? '').slice(0, 10)}</div>
+      </div>
+      ${d.id !== S.deviceId
+        ? `<button class="btn ghost btn-sm" onclick="revokeDevice('${d.id}','${escHtml(d.label)}')">Revoke</button>`
+        : ''}
+    </div>`).join('');
+}
+
+async function revokeDevice(deviceId, label) {
+  const ok = await confirmDialog(`Revoke "${label}"?`,
+    'Future events from this device will be ignored. This cannot be undone.', 'Revoke', true);
+  if (!ok) return;
+  await appendEvent('device_revoked', { device_id: deviceId, revoked_at: nowISO() });
+  toast(`"${label}" revoked.`);
+  renderDeviceRoster();
+}
+
+async function confirmPlainExport() {
+  const ok = await confirmDialog(
+    'Export unencrypted JSON?',
+    'This file will contain your passwords in plain text. Keep it secure.',
+    'Export', true
+  );
+  if (ok) await exportPlainJson();
+}
+
+// ══════════════════════════════════════════════════════════
+// IMPORT / EXPORT
+// ══════════════════════════════════════════════════════════
+
+// --- CSV helpers ---
+function parseCSVLine(line) {
+  const cols = []; let cur = ''; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === ',' && !inQ) { cols.push(cur); cur = ''; }
+    else cur += c;
+  }
+  cols.push(cur); return cols;
+}
+function parseCSV(text) {
+  const rows = text.trim().split(/\r?\n/);
+  if (!rows.length) return { headers: [], rows: [] };
+  const headers = parseCSVLine(rows[0]).map(h => h.replace(/^"|"$/g, '').trim());
+  const data = rows.slice(1).map(r => {
+    const cols = parseCSVLine(r);
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = (cols[i] ?? '').replace(/^"|"$/g, '').trim());
+    return obj;
+  }).filter(r => Object.values(r).some(v => v));
+  return { headers, rows: data };
+}
+
+function parseBitwarden(jsonText) {
+  const data = JSON.parse(jsonText);
+  const items = data.items ?? data;
+  const out = [];
+  for (const item of (Array.isArray(items) ? items : [])) {
+    const type = item.type;
+    if (type === 1 || item.login) {
+      out.push({ type: 'login', fields: {
+        title: item.name ?? '', username: item.login?.username ?? '',
+        password: item.login?.password ?? '',
+        url: item.login?.uris?.[0]?.uri ?? '', notes: item.notes ?? ''
+      }});
+    } else if (type === 2 || (!item.login && !item.card)) {
+      out.push({ type: 'note', fields: { title: item.name ?? '', body: item.notes ?? '' }});
+    } else if (type === 3 || item.card) {
+      const c = item.card ?? {};
+      out.push({ type: 'card', fields: {
+        label: item.name ?? '', cardholder: c.cardholderName ?? '',
+        number: c.number ?? '',
+        expiry: c.expMonth && c.expYear ? `${c.expMonth}/${c.expYear}` : '',
+        cvv: c.code ?? '', notes: item.notes ?? ''
+      }});
+    }
+  }
+  return out;
+}
+
+function parseChromeCsv(text) {
+  const { rows } = parseCSV(text);
+  return rows.map(r => ({ type: 'login', fields: {
+    title: r.name ?? r.title ?? '',
+    url: r.url ?? '', username: r.username ?? '',
+    password: r.password ?? '', notes: r.note ?? r.notes ?? ''
+  }}));
+}
+
+function parse1PasswordCsv(text) {
+  const { rows } = parseCSV(text);
+  return rows.map(r => ({ type: 'login', fields: {
+    title: r.Title ?? r.title ?? '',
+    url: r.URL ?? r.url ?? r.Website ?? '',
+    username: r.Username ?? r.username ?? '',
+    password: r.Password ?? r.password ?? '',
+    notes: r.Notes ?? r.notes ?? ''
+  }}));
+}
+
+function parseGenericCsv(text, mapping) {
+  const { rows } = parseCSV(text);
+  return rows.map(r => ({ type: 'login', fields: {
+    title: r[mapping.title] ?? '',
+    url: r[mapping.url] ?? '',
+    username: r[mapping.username] ?? '',
+    password: r[mapping.password] ?? '',
+    notes: r[mapping.notes] ?? ''
+  }}));
+}
+
+async function importEntries(entries) {
+  const ts = nowISO();
+  for (const e of entries) {
+    const id = uuid();
+    const fields = {};
+    for (const [k, v] of Object.entries(e.fields)) fields[k] = { v: String(v ?? ''), ts };
+    await appendEvent('entry_created', { id, type: e.type, fields });
+  }
+  await loadAndMerge();
+  renderEntryList(); renderTopbar();
+}
+
+// --- Import modal state ---
+let _importFmt = 'bitwarden';
+let _importParsed = null;
+let _importCsvHeaders = [];
+
+function openImportModal() {
+  _importParsed = null; _importCsvHeaders = [];
+  $('import-preview').style.display = 'none';
+  $('import-file').value = '';
+  $('csv-mapper').style.display = 'none';
+  selectImportFmt(document.querySelector('.import-format-btn[data-fmt="bitwarden"]'));
+  showModal('modal-import');
+}
+
+function selectImportFmt(btn) {
+  document.querySelectorAll('.import-format-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  _importFmt = btn.dataset.fmt;
+  $('csv-mapper').style.display = _importFmt === 'generic' ? '' : 'none';
+  _importParsed = null;
+  $('import-preview').style.display = 'none';
+}
+
+async function handleImportFileChange(file) {
+  if (!file) return;
+  const text = await file.text();
+  let entries;
+  try {
+    if (_importFmt === 'bitwarden') { entries = parseBitwarden(text); }
+    else if (_importFmt === 'chrome') { entries = parseChromeCsv(text); }
+    else if (_importFmt === '1password') { entries = parse1PasswordCsv(text); }
+    else if (_importFmt === 'tijori') {
+      await importArchive(text);
+      renderEntryList(); renderTopbar();
+      hideModal('modal-import');
+      toast('Archive restored.');
+      return;
+    } else if (_importFmt === 'generic') {
+      const { headers } = parseCSV(text);
+      _importCsvHeaders = headers;
+      populateCsvMapper(headers);
+      $('csv-mapper').style.display = '';
+      // Store the raw text for later
+      _importRawText = text;
+      $('import-preview').style.display = 'none';
+      return;
+    }
+  } catch (e) { toast('Could not parse file: ' + e.message, { error: true }); return; }
+
+  if (!entries?.length) { toast('No entries found.', { error: true }); return; }
+  _importParsed = entries;
+  $('import-preview-count').textContent = entries.length + ' entries found';
+  $('import-preview').style.display = '';
+}
+
+let _importRawText = '';
+
+function populateCsvMapper(headers) {
+  const opts = ['(skip)', ...headers].map(h => `<option>${escHtml(h)}</option>`).join('');
+  ['map-title','map-url','map-username','map-password','map-notes'].forEach((id, i) => {
+    const guesses = [['title','name','site'],['url','website','uri'],['username','user','email'],['password','pass'],['notes','note','comment']];
+    const el = $(id); if (!el) return;
+    el.innerHTML = opts;
+    const match = headers.findIndex(h => guesses[i].some(g => h.toLowerCase().includes(g)));
+    if (match >= 0) el.selectedIndex = match + 1; // +1 for (skip)
+  });
+}
+
+function applyGenericCsvMapping() {
+  const m = (id) => {
+    const sel = $(id); if (!sel) return '(skip)';
+    return sel.options[sel.selectedIndex].text;
+  };
+  const mapping = {
+    title: m('map-title'), url: m('map-url'), username: m('map-username'),
+    password: m('map-password'), notes: m('map-notes')
+  };
+  // Replace (skip) with empty
+  for (const k in mapping) if (mapping[k] === '(skip)') mapping[k] = '';
+  const entries = parseGenericCsv(_importRawText, mapping);
+  if (!entries.length) { toast('No entries found.', { error: true }); return; }
+  _importParsed = entries;
+  $('import-preview-count').textContent = entries.length + ' entries found';
+  $('import-preview').style.display = '';
+}
+
+async function confirmImport() {
+  if (_importFmt === 'generic' && !_importParsed) { applyGenericCsvMapping(); return; }
+  if (!_importParsed?.length) return;
+  await importEntries(_importParsed);
+  hideModal('modal-import');
+  toast(_importParsed.length + ' entries imported.');
+  _importParsed = null;
+}
+
+// --- Export ---
+async function exportEncryptedArchive() {
+  const streamNames = await getAllStreamNames(S.dirHandle);
+  const streams = {};
+  for (const name of streamNames) {
+    const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
+    streams[deviceId] = (await readStream(S.dirHandle, deviceId)).join('\n');
+  }
+  const blob = new Blob([JSON.stringify({
+    format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams
+  }, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, `tijori-backup-${new Date().toISOString().slice(0, 10)}.tijori`);
+  toast('Archive downloaded.');
+}
+
+async function exportPlainJson() {
+  const out = { version: 1, exported_at: nowISO(), entries: [] };
+  for (const e of S.entries.values()) {
+    const plain = { id: e.id, type: e.type };
+    for (const [k, f] of Object.entries(e.fields)) plain[k] = f.v;
+    out.entries.push(plain);
+  }
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, `tijori-plaintext-${new Date().toISOString().slice(0, 10)}.json`);
+  toast('Plaintext export downloaded.');
+}
+
+async function importArchive(text) {
+  const archive = JSON.parse(text);
+  if (archive.format !== 'tijori-archive-v1') throw new Error('Not a Tijori archive.');
+
+  for (const [deviceId, content] of Object.entries(archive.streams ?? {})) {
+    const name = `tijori-events-${deviceId}.jsonl`;
+    const existing = await readFileText(S.dirHandle, name);
+    if (!existing) {
+      await writeFileText(S.dirHandle, name, content + (content.endsWith('\n') ? '' : '\n'));
+    } else {
+      // Merge by seq+device_id dedup
+      const seen = new Set();
+      existing.split('\n').filter(l => l.trim()).forEach(l => {
+        try { const e = JSON.parse(l); seen.add(`${e.device_id}:${e.seq}`); } catch {}
+      });
+      const toAdd = content.split('\n').filter(l => {
+        if (!l.trim()) return false;
+        try { const e = JSON.parse(l); return !seen.has(`${e.device_id}:${e.seq}`); } catch { return false; }
+      });
+      if (toAdd.length) await writeFileText(S.dirHandle, name, existing.trimEnd() + '\n' + toAdd.join('\n') + '\n');
+    }
+  }
+
+  // Merge meta devices
+  if (archive.meta?.devices && S.meta) {
+    const existingIds = new Set(S.meta.devices.map(d => d.id));
+    let changed = false;
+    for (const d of archive.meta.devices) {
+      if (!existingIds.has(d.id)) { S.meta.devices.push(d); changed = true; }
+    }
+    if (changed) await writeMeta(S.dirHandle, S.meta);
+  }
+
+  await loadAndMerge();
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ══════════════════════════════════════════════════════════
+// INTEGRITY CHECK (UI)
+// ══════════════════════════════════════════════════════════
+
+async function handleIntegrityCheck() {
+  $('integrity-summary').textContent = 'Checking…';
+  $('integrity-results').innerHTML = '';
+  showModal('modal-integrity');
+  try {
+    const results = await verifyAllChains();
+    const allOk = results.every(r => r.ok);
+    $('integrity-summary').textContent = allOk ? '✓ All streams verified' : '✗ Tamper detected';
+    $('integrity-summary').style.color = allOk ? 'var(--ok)' : 'var(--danger)';
+    $('integrity-results').innerHTML = results.length
+      ? results.map(r => `
+        <div class="integrity-row">
+          <span class="${r.ok ? 'ok' : 'err'}">${r.ok ? '✓' : '✗'}</span>
+          <div>
+            <div style="font-weight:500">Device ${r.deviceId.slice(0, 8)}… — ${r.lines} event${r.lines !== 1 ? 's' : ''}</div>
+            ${r.error ? `<div style="color:var(--danger);font-size:12px;margin-top:2px">${escHtml(r.error)}</div>` : ''}
+          </div>
+        </div>`).join('')
+      : '<p style="color:var(--muted);font-size:13px">No event streams found.</p>';
+  } catch (e) {
+    $('integrity-results').innerHTML = `<p style="color:var(--danger)">${escHtml(e.message)}</p>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// HELP TABS
+// ══════════════════════════════════════════════════════════
+
+function switchHelpTab(tab, btn) {
+  document.querySelectorAll('#modal-help .tab-row button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#modal-help .tab-pane').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  $('help-' + tab)?.classList.add('active');
+}
+
+// ══════════════════════════════════════════════════════════
+// FORM HELPERS
+// ══════════════════════════════════════════════════════════
+
+function togglePw(inputId, btn) {
+  const el = $(inputId); if (!el) return;
+  el.type = el.type === 'password' ? 'text' : 'password';
+  btn.textContent = el.type === 'password' ? '👁' : '🙈';
+}
+
+function formatCardNumber(input) {
+  let v = input.value.replace(/\D/g, '').slice(0, 16);
+  input.value = v.replace(/(.{4})/g, '$1 ').trim();
+}
+
+function formatExpiry(input) {
+  let v = input.value.replace(/\D/g, '').slice(0, 4);
+  if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2);
+  input.value = v;
+}
+
+// ══════════════════════════════════════════════════════════
+// SCREEN HANDLERS
+// ══════════════════════════════════════════════════════════
+
+async function handleCreateNew() {
+  if (!window.showDirectoryPicker) {
+    toast('File System Access API not supported in this browser. Try Chrome or Edge.', { error: true, dur: 5000 });
+    return;
+  }
+  try {
+    const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const existing = await readMeta(dir);
+    if (existing) {
+      toast('This folder already has a vault. Use "Open vault" instead.', { error: true });
+      return;
+    }
+    S.dirHandle = dir;
+    $('create-folder-tag').textContent = dir.name;
+    $('create-device-label').value = getDefaultDeviceLabel();
+    $('create-password').value = '';
+    $('create-password2').value = '';
+    updateEntropyMeter('');
+    showScreen('create');
+  } catch (e) { if (e.name !== 'AbortError') toast(e.message, { error: true }); }
+}
+
+async function handleOpenExisting() {
+  if (!window.showDirectoryPicker) {
+    toast('File System Access API not supported. Try Chrome or Edge.', { error: true, dur: 5000 });
+    return;
+  }
+  try {
+    const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const meta = await readMeta(dir);
+    if (!meta) { toast('No Tijori vault found in that folder.', { error: true }); return; }
+    S.meta = meta; S.dirHandle = dir;
+    await idbSet('dirHandle', dir);
+
+    const storedId = localStorage.getItem('tijori.deviceId');
+    const registered = meta.devices.some(d => d.id === storedId);
+
+    if (registered) {
+      S.deviceId = storedId;
+      S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown';
+      $('unlock-folder-tag').textContent = dir.name;
+      $('unlock-hint').textContent = '';
+      showScreen('unlock');
+    } else {
+      $('register-folder-tag').textContent = dir.name;
+      $('register-device-label').value = getDefaultDeviceLabel();
+      $('register-password').value = '';
+      if (!S.deviceId) S.deviceId = uuid();
+      showScreen('register');
+    }
+  } catch (e) { if (e.name !== 'AbortError') toast(e.message, { error: true }); }
+}
+
+async function handleReconnect() {
+  const handle = S._pendingHandle;
+  if (!handle) return;
+  try {
+    const perm = await handle.requestPermission({ mode: 'readwrite' });
+    if (perm === 'granted') {
+      S.dirHandle = handle; S._pendingHandle = null;
+      $('unlock-folder-tag').textContent = handle.name;
+      showScreen('unlock');
+    }
+  } catch (e) { toast(e.message, { error: true }); }
+}
+
+async function handleCreateVault() {
+  const label = $('create-device-label').value.trim() || getDefaultDeviceLabel();
+  const pw = $('create-password').value;
+  const pw2 = $('create-password2').value;
+  if (!pw) { toast('Master password is required.', { error: true }); return; }
+  if (pw !== pw2) { toast('Passwords do not match.', { error: true }); return; }
+  if (estimateEntropy(pw) < 20) { toast('Password too weak (< 20 bits entropy).', { error: true }); return; }
+
+  const btn = $('create-btn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    await createVault(S.dirHandle, pw, label);
+    $('create-password').value = ''; $('create-password2').value = '';
+    showScreen('vault'); toast('Vault created!');
+  } catch (e) { toast(e.message, { error: true }); }
+  finally { btn.disabled = false; btn.textContent = 'Create vault'; }
+}
+
+async function handleUnlock() {
+  const pw = $('unlock-pass').value;
+  const hint = $('unlock-hint');
+  if (!pw) { hint.textContent = 'Enter your master password.'; return; }
+  hint.textContent = 'Decrypting…';
+
+  const btn = $('unlock-btn');
+  btn.disabled = true; btn.textContent = 'Unlocking…';
+  try {
+    await unlockVault(S.dirHandle, pw);
+    $('unlock-pass').value = ''; hint.textContent = '';
+    showScreen('vault');
+  } catch (e) {
+    hint.textContent = e.message;
+    hint.style.color = 'var(--danger)';
+    $('unlock-pass').focus();
+  } finally { btn.disabled = false; btn.textContent = 'Unlock'; }
+}
+
+async function handleRegisterDevice() {
+  const label = $('register-device-label').value.trim() || getDefaultDeviceLabel();
+  const pw = $('register-password').value;
+  if (!pw) { toast('Enter the master password.', { error: true }); return; }
+
+  const btn = $('register-btn');
+  btn.disabled = true; btn.textContent = 'Registering…';
+  try {
+    await registerDevice(S.dirHandle, pw, S.deviceId, label);
+    $('register-password').value = '';
+    showScreen('vault'); toast('Device registered!');
+  } catch (e) { toast(e.message, { error: true }); }
+  finally { btn.disabled = false; btn.textContent = 'Register device'; }
+}
+
+function getDefaultDeviceLabel() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Mac/.test(ua)) return 'Mac';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'Browser';
+}
+
+// ══════════════════════════════════════════════════════════
+// KEYBOARD SHORTCUTS
+// ══════════════════════════════════════════════════════════
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.querySelector('.modal-bg.active')) { hideAllModals(); return; }
+    if (S.searchQuery) { clearSearch(); return; }
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'n' && S.key) {
+    e.preventDefault(); openEntryModal(null);
+  }
+  if (e.key === '/' && S.key && !e.target.matches('input, textarea, select')) {
+    e.preventDefault(); $('search-input')?.focus();
+  }
+});
+
+// Close modal on backdrop click
+document.querySelectorAll('.modal-bg').forEach(bg =>
+  bg.addEventListener('click', e => { if (e.target === bg) hideAllModals(); })
+);
+
+// ══════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════
+
+async function init() {
+  S.deviceId = localStorage.getItem('tijori.deviceId');
+  S.deviceLabel = localStorage.getItem('tijori.deviceLabel');
+  const saved = localStorage.getItem('tijori.settings');
+  if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
+
+  // Try to reconnect stored dirHandle
+  try {
+    const stored = await idbGet('dirHandle');
+    if (stored) {
+      const perm = await stored.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') {
+        const meta = await readMeta(stored);
+        if (meta) {
+          S.dirHandle = stored; S.meta = meta;
+          $('unlock-folder-tag').textContent = stored.name;
+          showScreen('unlock');
+          return;
+        }
+      } else if (perm === 'prompt') {
+        S._pendingHandle = stored;
+        const banner = $('reconnect-banner');
+        if (banner) { banner.classList.add('show'); $('reconnect-folder-name').textContent = stored.name; }
+      }
+    }
+  } catch {}
+
+  showScreen('welcome');
+}
+
+init();
+</script>
+</body>
+</html>
