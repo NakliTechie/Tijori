@@ -1,10 +1,10 @@
 name: Notify naklOS to re-mirror
 
 # When index.html changes on main, ping nakli-dev to re-pull Tijori into
-# its same-origin mirror at nakli.dev/apps/tijori/. The sync workflow there
-# opens a PR with any drift, which Chirag reviews + merges.
+# its same-origin mirror at naklios.dev/apps/tijori/. The sync workflow
+# there opens a PR with any drift, which Chirag reviews + merges.
 #
-# Requires the secret NAKLOS_DISPATCH_TOKEN (a fine-grained PAT with
+# Requires the secret NAKLIOS_DISPATCH_TOKEN (a fine-grained PAT with
 # Actions:write on NakliTechie/nakli-dev). See nakli-dev README for setup.
 
 on:
@@ -20,4 +20,4 @@ jobs:
       - name: Trigger nakli-dev sync workflow
         run: gh workflow run sync-mirrors.yml --repo NakliTechie/nakli-dev --ref main
         env:
-          GH_TOKEN: ${{ secrets.NAKLOS_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.NAKLIOS_DISPATCH_TOKEN }}
