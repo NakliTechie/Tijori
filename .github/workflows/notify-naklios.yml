@@ -1,4 +1,4 @@
-name: Notify naklOS to re-mirror
+name: Notify nakliOS to re-mirror
 
 # When index.html changes on main, ping nakli-dev to re-pull Tijori into
 # its same-origin mirror at naklios.dev/apps/tijori/. The sync workflow
