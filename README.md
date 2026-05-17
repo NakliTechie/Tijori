@@ -16,8 +16,11 @@ Optional hardware-key second factor via WebAuthn PRF.
 - Stores **Login**, **Card**, **Note**, and **TOTP Code** entries
 - **Optional hardware-key second factor** — bind any FIDO2 / WebAuthn authenticator (YubiKey, Titan, Solo, Touch ID, iCloud passkey, Android passkey) via the PRF extension. Hardware-derived secret mixed into the key derivation; **both** master password and key required to unlock. Multiple keys per vault for backup-key safety.
 - **Argon2id key derivation** for new vaults (memory-hard, GPU-resistant). Existing PBKDF2 vaults migrate on next save; both formats remain readable.
+- **Multi-vault picker** on the welcome screen — keep personal / work / family vaults side-by-side; one click each. Set a default to auto-open on launch.
+- **Local vault audit** — flags reused or weak passwords, missing 2FA, aging entries, orphan TOTPs, and other hygiene issues. Computed in memory, no HIBP, no network.
+- **Export to KeePass (.kdbx)** — full-fidelity KDBX4 export readable by KeePassXC, KeePassium, Strongbox, KeePassDX, KeeWeb, and any other KeePass-compatible client. Use Tijori as the desktop editor, KeePass apps as mobile read clients.
+- **Export to CSV** (Bitwarden-compatible) for migration into Bitwarden / 1Password / Apple Passwords / Dashlane / NordPass / etc.
 - Every entry is individually encrypted: AES-256-GCM with a random 12-byte nonce
-- Key derived via PBKDF2-SHA-256, 600,000 iterations (OWASP 2023 level)
 - Vault format is an **append-only event log** — one `.jsonl` file per device, SHA-256 hash-chained
 - **Air-gapped sync via QR flash** — beam the encrypted vault to another device as a stream of animated QR codes. No cable, no Wi-Fi, no cloud, no account. Works for both **first-time bootstrap** (empty receiving vault) and **ongoing updates** (existing vault merges new events only — dedupes by `device_id:seq`)
 - **Multi-device sync** by any file transport: cloud folder, Syncthing, Git, USB, encrypted archive, or QR flash — same deterministic merge, same file format
@@ -25,7 +28,6 @@ Optional hardware-key second factor via WebAuthn PRF.
 - Device revocation (soft — skips future events from the revoked device on merge)
 - Built-in TOTP engine (RFC 6238): SHA-1/256/512, 6/7/8 digits, 30s/60s, countdown rings, next-code preview
 - Import from Bitwarden, Chrome/Edge CSV, 1Password CSV, generic CSV, or `otpauth://` URIs
-- Export as encrypted `.tijori` archive or plaintext JSON
 - Clipboard auto-clears, idle lock, lock-on-tab-hide
 - Password generator + entropy estimator
 
@@ -46,6 +48,14 @@ Tested authenticators:
 **Bind two keys.** A single bound key with no fallback is a single point of failure. Tijori nags you until you either register a second key or explicitly enable the password-only fallback. Don't lock yourself out.
 
 **Requirements:** Chrome 116+, Edge 116+, or Safari 18+. Firefox does not yet ship PRF in stable. Tijori falls back to password-only on browsers without PRF support. Hardware-key binding also requires Tijori served over HTTPS or localhost — the "Save Page As" deployment mode loses this feature (vault still works, just no hardware-key option).
+
+## The vault outlives the tool
+
+Your vault is yours. Three ways to leave Tijori without losing data:
+
+- **KeePass (`.kdbx`)** — full-fidelity snapshot in KDBX4 (ChaCha20 + Argon2id). Readable by KeePassXC (desktop), KeePassium (iOS), KeePassDX (Android), Strongbox (iOS/Mac), KeeWeb, MacPass, and any other KeePass-compatible client. *Settings → Data → Export to KeePass.* Recommended pattern: Tijori as the canonical desktop editor, KeePass apps as read-only mobile clients.
+- **CSV (Bitwarden-compatible)** — for migrating into Bitwarden, 1Password, Apple Passwords, Dashlane, NordPass, etc. Plaintext, lossy on cards / notes (flattened into the Notes column), but importable everywhere. *Settings → Data → Export as CSV.*
+- **Encrypted archive (`.tijori`)** — Tijori's own format, for moving between Tijori instances. *Settings → Data → Export encrypted archive.*
 
 ## What it deliberately isn't
 
