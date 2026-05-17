@@ -264,6 +264,12 @@ td:last-child { color: var(--muted); }
             master password. It has never seen it. If you lose it, the vault contents are
             unrecoverable.
           </p>
+          <p>
+            <strong>Considering a hardware key?</strong> You can bind one after
+            creating the vault, from Settings &rarr; Security. Hardware keys are a
+            second factor — both the master password and the key will be required
+            to unlock. Best practice: bind two keys (a primary and a backup).
+          </p>
         </div>
       </div>
 
@@ -380,6 +386,42 @@ td:last-child { color: var(--muted); }
         </div>
       </div>
 
+      <div class="step">
+        <div class="phone-wrap">
+          <div class="phone">
+            <img src="screenshots/08-security.svg" alt="Tijori security settings — bound hardware keys list, password-only fallback toggle">
+          </div>
+        </div>
+        <div>
+          <span class="num">08 / SECURITY</span>
+          <h4>Hardware-key binding lives here.</h4>
+          <p>
+            <strong>Bind a hardware key</strong> registers any FIDO2 / WebAuthn
+            authenticator — YubiKey, Touch ID, Windows Hello, iCloud passkey —
+            as a second factor. Both the master password and the key are required
+            to unlock after binding.
+          </p>
+          <p>
+            <strong>Register a second key</strong> as soon as you've bound the
+            first. A single hardware key with no fallback is a single point of
+            failure. Tijori reminds you until you've bound two keys or explicitly
+            enabled password-only fallback.
+          </p>
+          <p>
+            <strong>Password-only fallback</strong> lets the vault be unlocked
+            with just the master password as a recovery path. Enabling it weakens
+            the second-factor model — a stolen password alone could unlock the
+            vault. Choose based on whether convenience or strict-two-factor
+            matters more for your threat model.
+          </p>
+          <p>
+            <strong>Change master password</strong> requires touching every bound
+            key once, because each key's wrap blob has to be regenerated against
+            the new password.
+          </p>
+        </div>
+      </div>
+
     </div>
   </section>
 
@@ -391,12 +433,14 @@ td:last-child { color: var(--muted); }
       <table>
         <thead><tr><th>Concern</th><th>Implementation</th></tr></thead>
         <tbody>
-          <tr><td>Key derivation</td><td>PBKDF2-SHA-256, 600,000 iterations. Web Crypto API only — no library.</td></tr>
+          <tr><td>Key derivation (v2 vaults)</td><td>Argon2id, m=64MB, t=3, p=4. WASM blob inlined (~45KB base64), no CDN.</td></tr>
+          <tr><td>Key derivation (v1 vaults)</td><td>PBKDF2-SHA-256, 600,000 iterations. Auto-upgrades to Argon2id on next save.</td></tr>
           <tr><td>Entry encryption</td><td>AES-256-GCM, random 12-byte nonce per event. Payload is JSON, encrypted to opaque base64.</td></tr>
           <tr><td>Hash chain</td><td>SHA-256 of previous raw event-line string, embedded as <code>prev_hash</code>. Break any byte, break the chain. Verifiable in-app via Settings → Vault.</td></tr>
           <tr><td>TOTP</td><td>RFC 6238 over WebCrypto HMAC-SHA-{1,256,512}. Base32 decoder inline (~25 lines). No library.</td></tr>
           <tr><td>File I/O</td><td>File System Access API (<code>showDirectoryPicker</code>). Handle persisted in IndexedDB for reconnect. Chrome/Edge only — Firefox/Safari lack the API.</td></tr>
           <tr><td>Network requests</td><td>Zero after page load. CSP has <code>connect-src 'none'</code>. Open DevTools and verify.</td></tr>
+          <tr><td>Hardware-key binding</td><td>WebAuthn PRF extension. Multiple keys per vault. <code>master_secret</code> wrapped per key — never re-encrypts vault data, only the wrap blobs change.</td></tr>
           <tr><td>Dependencies</td><td>Zero. No CDN, no npm, no framework.</td></tr>
           <tr><td>Build step</td><td>None. The source file is the app.</td></tr>
         </tbody>
@@ -434,6 +478,94 @@ td:last-child { color: var(--muted); }
         <p>Revoking a device prevents its future events from being merged. It does not re-encrypt the vault. A revoked device that already has a copy can still decrypt with the master password. Full remediation: revocation + master password change.</p>
       </div>
     </div>
+  </section>
+
+  <!-- ═══════ THREAT MODEL ═══════ -->
+  <section>
+    <h2>What Tijori protects against, and what it doesn't</h2>
+    <p class="sub">Be honest about this before deciding to trust the app.</p>
+
+    <h3 style="margin:0 0 12px;font-size:15px;color:var(--ok)">&#x2705; Things Tijori does protect you from</h3>
+
+    <div class="cards" style="margin-bottom:24px">
+      <div class="card">
+        <h3>Server breach</h3>
+        <p>There is no server. The "service" cannot be hacked because it doesn't exist. Your vault never leaves the folder you choose.</p>
+      </div>
+      <div class="card">
+        <h3>Vendor lock-in</h3>
+        <p>The vault is yours, on your disk, in a format documented in this guide. Tijori shutting down tomorrow doesn't strand your data. Open the .jsonl files in a text editor; the format is plain JSON.</p>
+      </div>
+      <div class="card">
+        <h3>Cloud snooping</h3>
+        <p>If you sync via Dropbox, iCloud, Google Drive, or Syncthing, the cloud provider sees only AES-256-GCM ciphertext. They cannot decrypt without your master password (and, if you bind one, your hardware key).</p>
+      </div>
+      <div class="card">
+        <h3>File tampering</h3>
+        <p>The event log is hash-chained. Any single-byte modification breaks the chain. Verifiable from Settings &rarr; Vault &rarr; Verify log integrity.</p>
+      </div>
+      <div class="card">
+        <h3>Bulk credential stuffing</h3>
+        <p>Each vault has a unique salt. There is no "Tijori user database" to leak.</p>
+      </div>
+      <div class="card">
+        <h3>Password breach (with hardware-key binding)</h3>
+        <p>With a bound hardware key, knowing your master password is not enough. An attacker also needs physical access to your registered authenticator.</p>
+      </div>
+    </div>
+
+    <h3 style="margin:0 0 12px;font-size:15px;color:var(--warn)">&#x26A0; Things Tijori partially protects you from</h3>
+
+    <div class="cards" style="margin-bottom:24px">
+      <div class="card">
+        <h3>Malicious browser extensions</h3>
+        <p>Any browser-based password vault is theoretically reachable by an extension with broad permissions. Mitigations: strict CSP (<code>connect-src 'none'</code> means an extension can't exfiltrate to its own server through Tijori's network context), no extension hooks in our code. Defence in depth: run Tijori in a separate Chrome profile with minimal extensions.</p>
+      </div>
+      <div class="card">
+        <h3>Shoulder surfing</h3>
+        <p>Tijori uses bullet-point password fields and clipboard-copy buttons that don't display the value. Idle lock + lock-on-tab-hide reduce exposure. None of this helps against a camera over your shoulder.</p>
+      </div>
+    </div>
+
+    <h3 style="margin:0 0 12px;font-size:15px;color:var(--danger,#ff6b6b)">&#x274C; Things Tijori cannot protect you from</h3>
+
+    <div class="cards" style="margin-bottom:24px">
+      <div class="card">
+        <h3>Malware on your device</h3>
+        <p>A keylogger captures your master password as you type it. Memory inspection by privileged malware reads the vault key while unlocked. No browser-based vault — and no native vault — fully defends against this. Tijori is not magic.</p>
+      </div>
+      <div class="card">
+        <h3>Forgotten master password</h3>
+        <p>There is no recovery. By design. If you forget the master password and don't have a hardware key with password-only fallback disabled, the vault contents are mathematically unrecoverable. Back up your password the same way you back up your vault.</p>
+      </div>
+      <div class="card">
+        <h3>Lost hardware key (without a backup)</h3>
+        <p>If you bind a single hardware key and disable password-only fallback, and that key is lost, the vault is unrecoverable. Always register a backup key, or accept the password-only fallback as your recovery path.</p>
+      </div>
+      <div class="card">
+        <h3>Coercion</h3>
+        <p>Tijori cannot detect that you are being forced to unlock. No vault can.</p>
+      </div>
+    </div>
+
+    <h3 style="margin:24px 0 12px;font-size:15px">How Tijori compares</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Vault</th><th>Server</th><th>Account</th><th>Hardware-key support</th><th>Recovery</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tijori</td><td>none</td><td>none</td><td>WebAuthn PRF (free, optional)</td><td>None — back up the file</td></tr>
+          <tr><td>Bitwarden</td><td>hosted (or self-host)</td><td>required</td><td>YubiKey (paid tier)</td><td>Email reset (cloud)</td></tr>
+          <tr><td>KeePassXC</td><td>none</td><td>none</td><td>YubiKey HMAC-SHA1 (USB native)</td><td>None — back up the .kdbx</td></tr>
+          <tr><td>1Password</td><td>hosted</td><td>required</td><td>Yes (all tiers)</td><td>Account recovery via Secret Key</td></tr>
+          <tr><td>pass / passage</td><td>none</td><td>none</td><td>Hardware-key via GPG card</td><td>None — back up the directory</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:14px;font-size:14px;color:var(--muted)">
+      Tijori sits closest to KeePassXC. The differences: Tijori is browser-native (no install), uses an append-only event log instead of a monolithic .kdbx (multi-device merge is deterministic), and supports any FIDO2 authenticator via WebAuthn PRF (no driver, no native code).
+    </p>
   </section>
 
   <div class="footer">
