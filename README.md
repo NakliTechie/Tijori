@@ -7,12 +7,15 @@
 
 No install, no account, no server, no sync service.
 Your vault is a folder. Move the folder and your vault moves with it.
+Optional hardware-key second factor via WebAuthn PRF.
 
 ---
 
 ## What it does
 
 - Stores **Login**, **Card**, **Note**, and **TOTP Code** entries
+- **Optional hardware-key second factor** — bind any FIDO2 / WebAuthn authenticator (YubiKey, Titan, Solo, Touch ID, iCloud passkey, Android passkey) via the PRF extension. Hardware-derived secret mixed into the key derivation; **both** master password and key required to unlock. Multiple keys per vault for backup-key safety.
+- **Argon2id key derivation** for new vaults (memory-hard, GPU-resistant). Existing PBKDF2 vaults migrate on next save; both formats remain readable.
 - Every entry is individually encrypted: AES-256-GCM with a random 12-byte nonce
 - Key derived via PBKDF2-SHA-256, 600,000 iterations (OWASP 2023 level)
 - Vault format is an **append-only event log** — one `.jsonl` file per device, SHA-256 hash-chained
@@ -26,6 +29,24 @@ Your vault is a folder. Move the folder and your vault moves with it.
 - Clipboard auto-clears, idle lock, lock-on-tab-hide
 - Password generator + entropy estimator
 
+## Hardware key support
+
+[#hardware-key-support](#hardware-key-support)
+
+Tijori supports any WebAuthn authenticator that implements the PRF extension as a **second factor** alongside the master password. The hardware-derived secret is mixed into the vault key — neither factor alone unlocks anything.
+
+Tested authenticators:
+
+- YubiKey 5 series (USB, NFC) on Chrome, Edge, Safari
+- Touch ID on macOS Safari 18+
+- iCloud-synced passkeys on iOS 18+ / Safari 18+
+- Android passkeys synced via Google Password Manager
+- Hardware-bound Windows Hello platform credentials
+
+**Bind two keys.** A single bound key with no fallback is a single point of failure. Tijori nags you until you either register a second key or explicitly enable the password-only fallback. Don't lock yourself out.
+
+**Requirements:** Chrome 116+, Edge 116+, or Safari 18+. Firefox does not yet ship PRF in stable. Tijori falls back to password-only on browsers without PRF support. Hardware-key binding also requires Tijori served over HTTPS or localhost — the "Save Page As" deployment mode loses this feature (vault still works, just no hardware-key option).
+
 ## What it deliberately isn't
 
 - **No server.** Vault files never leave the folder you choose.
@@ -34,13 +55,19 @@ Your vault is a folder. Move the folder and your vault moves with it.
 - **No telemetry, no analytics, no network requests of any kind after page load.**
 - **No framework, no build step.** One HTML file. Open it in a text editor, read every line.
 - **No sync built in.** Sync is your transport choice — Tijori just merges what it finds.
+- **No biometric-only unlock.** Touch ID and Windows Hello can be bound as hardware factors, but the master password is always also required.
+- **No passkey-as-the-only-credential.** WebAuthn is a second factor. A lost key with no backup and no password-only fallback means a lost vault — by design, no recovery service exists.
+- **No telemetry from WebAuthn flows.** Browser API calls into your authenticator are not network requests. We don't and can't log them.
 
 ## How it works
 
 | Concern | Solution |
 |---|---|
-| KDF | PBKDF2-SHA-256, 600,000 iterations |
+| KDF (v2 vaults) | Argon2id, m=64MB, t=3, p=4 (inlined WASM, no CDN) |
+| KDF (v1 vaults) | PBKDF2-SHA-256, 600,000 iterations (legacy; still readable forever) |
 | Per-event encryption | AES-256-GCM, random 12-byte nonce |
+| Hardware-key binding | WebAuthn PRF extension (HKDF-mix into wrap key). Multiple keys per vault. Synced platform passkeys supported (with caveats — see guide). |
+| Key combiner | HKDF-SHA-256 over `(pw_key XOR prf_secret)`, domain-separated info strings, master_secret wrapped per bound key |
 | Hash chain | SHA-256 over previous raw event-line string; `genesis` for first |
 | Merge | Union all device streams, sort by `(ts, device_id)`, per-field last-writer-wins |
 | TOTP | RFC 6238 — WebCrypto `HMAC-SHA-{1,256,512}`, base32 inline (~25 lines) |
@@ -123,6 +150,26 @@ Why both exist: TOTP is a second factor. Combining it with passwords under one m
 
 - **Desktop** — Chrome, Edge, Firefox for the full folder-vault experience (File System Access API).
 - **Mobile / iOS** — Safari 16.4+, Chrome on iOS. Vault lives in the browser's Origin Private File System (OPFS) instead of a user-visible folder. Export regularly to a desktop vault or via QR flash.
+
+## Verifying what you're running
+
+[#verifying-what-youre-running](#verifying-what-youre-running)
+
+Every release publishes:
+
+- SHA-256 of `index.html` (on the GitHub Releases page)
+- Total line count (in the release notes)
+- CSP enforcement is visible in the `<meta http-equiv="Content-Security-Policy">` tag at the top of the file
+
+To verify you're running what the source says you're running:
+
+```
+shasum -a 256 path/to/index.html
+```
+
+Compare to the published hash for that release. If they don't match, you're running something else.
+
+Network posture (`connect-src 'none'`) is enforceable by the browser. Open DevTools → Network panel, reload Tijori, and observe: nothing fetches after the initial document. Any attempted XHR, fetch, or WebSocket would be blocked and visible in the console.
 
 ## License
 
