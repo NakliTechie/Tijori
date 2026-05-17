@@ -1145,9 +1145,10 @@ function parseOtpauthUri(uri) {
 // CRYPTO
 // ══════════════════════════════════════════════════════════
 
+// PBKDF2 (legacy — v1 vaults, and v2 vaults' kdf_legacy block for cross-device v1 events)
 const KDF_ITER = 600000;
 
-async function deriveKey(password, salt) {
+async function deriveKeyPbkdf2(password, salt) {
   const raw = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(password),
     { name: 'PBKDF2' }, false, ['deriveKey']
@@ -1159,6 +1160,117 @@ async function deriveKey(password, salt) {
     false, ['encrypt', 'decrypt']
   );
 }
+// Back-compat alias
+const deriveKey = deriveKeyPbkdf2;
+
+// ── Argon2id loader (v2 vaults) ────────────────────────────
+// The WASM blob is inlined as base64 in the ARGON2_WASM_B64 constant below.
+// Until a blob is provided, argon2.isReady() returns false and v2 features
+// requiring Argon2id are disabled. Pure-JS fallback is intentionally not
+// shipped: the handoff allows the agent to defer the WASM blob choice to
+// the maintainer. With a blob present, derivation should take 300-800ms
+// on M4 Pro (memory_kib=65536, iterations=3, parallelism=4).
+const ARGON2_WASM_B64 = ''; // ← paste hash-wasm argon2 base64 here to enable v2 KDF
+const ARGON2_PARAMS = { memory_kib: 65536, iterations: 3, parallelism: 4, hash_length: 32 };
+
+const argon2 = (() => {
+  let _ready = false, _hash = null, _loadErr = null;
+  async function load() {
+    if (_ready || _loadErr) return;
+    if (!ARGON2_WASM_B64) { _loadErr = 'WASM blob not inlined'; return; }
+    try {
+      // hash-wasm exposes a default Module shape; this loader is structured
+      // for hash-wasm/argon2. If a different build is inlined, adapt here.
+      const bytes = Uint8Array.from(atob(ARGON2_WASM_B64), c => c.charCodeAt(0));
+      const mod = await WebAssembly.instantiate(bytes, {});
+      // hash-wasm's argon2 exports an `argon2id` function; if missing we
+      // require the maintainer to wire `_hash` to the correct export name.
+      const exp = mod.instance.exports;
+      if (typeof exp.argon2id === 'function') {
+        _hash = (pw, salt) => {
+          // hash-wasm-style call. Returns Uint8Array(32).
+          return exp.argon2id(pw, salt,
+            ARGON2_PARAMS.memory_kib, ARGON2_PARAMS.iterations,
+            ARGON2_PARAMS.parallelism, ARGON2_PARAMS.hash_length);
+        };
+      } else if (typeof exp.hash === 'function') {
+        _hash = exp.hash;
+      } else {
+        _loadErr = 'Inlined WASM does not export argon2id/hash';
+        return;
+      }
+      _ready = true;
+    } catch (e) {
+      _loadErr = String(e?.message || e);
+    }
+  }
+  return {
+    init: load,
+    isReady() { return _ready; },
+    loadError() { return _loadErr; },
+    async derive(password, salt32) {
+      await load();
+      if (!_ready) throw new Error('Argon2id unavailable: ' + (_loadErr || 'not initialized'));
+      const pw = new TextEncoder().encode(password);
+      const out = _hash(pw, salt32);
+      // Normalize to Uint8Array(32)
+      const u8 = out instanceof Uint8Array ? out : new Uint8Array(out);
+      if (u8.length !== 32) throw new Error('Argon2id returned ' + u8.length + ' bytes; expected 32');
+      return u8;
+    }
+  };
+})();
+
+// ── HKDF-SHA-256 helper ────────────────────────────────────
+// Inputs: ikm (Uint8Array), saltStr (string, UTF-8), infoStr (string, UTF-8).
+// Returns Uint8Array(32). Salt is "tijori-v2" for all v2 derivations.
+async function hkdf32(ikm, saltStr, infoStr) {
+  const baseKey = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({
+    name: 'HKDF',
+    hash: 'SHA-256',
+    salt: new TextEncoder().encode(saltStr),
+    info: new TextEncoder().encode(infoStr)
+  }, baseKey, 256);
+  return new Uint8Array(bits);
+}
+
+// Constant-time XOR of two 32-byte arrays.
+function xor32(a, b) {
+  const r = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) r[i] = a[i] ^ b[i];
+  return r;
+}
+
+// Import 32 raw bytes as an AES-GCM CryptoKey.
+async function importAesKey(raw32) {
+  return crypto.subtle.importKey('raw', raw32, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+// Wrap (encrypt) a 32-byte secret under an AES-GCM key. Returns { ct, nonce } base64.
+async function aesGcmWrap(aesKey, secret32) {
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, secret32);
+  return { ct_b64: b64e(new Uint8Array(ct)), nonce_b64: b64e(nonce) };
+}
+
+// Unwrap (decrypt) a wrapped secret. Returns Uint8Array on success; throws on tag failure.
+async function aesGcmUnwrap(aesKey, ct_b64, nonce_b64) {
+  const ct = b64d(ct_b64);
+  const iv = b64d(nonce_b64);
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ct);
+  return new Uint8Array(plain);
+}
+
+// base64url ↔ base64 helpers (WebAuthn uses base64url for credential IDs).
+function b64urlFromB64(b64) { return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function b64FromB64url(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return s;
+}
+function b64urlEncode(buf) { return b64urlFromB64(b64e(buf)); }
+function b64urlDecode(s) { return b64d(b64FromB64url(s)); }
 
 async function encryptPayload(key, obj) {
   const nonce = crypto.getRandomValues(new Uint8Array(12));
@@ -1179,13 +1291,13 @@ async function decryptPayload(key, payload_ct, nonce_b64) {
 // ══════════════════════════════════════════════════════════
 
 const S = {
-  key: null,
-  salt: null,           // Uint8Array
+  key: null,              // active write key (v1: PBKDF2 result; v2: vault_key from master_secret)
+  salt: null,             // Uint8Array — v1 PBKDF2 salt, or v2 kdf_legacy salt if present
   dirHandle: null,
   meta: null,
   deviceId: null,
   deviceLabel: null,
-  entries: new Map(),   // id → entry
+  entries: new Map(),     // id → entry
   filterType: 'all',
   searchQuery: '',
   idleTimer: null,
@@ -1193,8 +1305,35 @@ const S = {
   _pendingHandle: null,
   _isOpfs: false,
   _opfsVaultName: null,
-  settings: { idleTimeout: 300, clipClear: 30, lockOnHide: true }
+  settings: { idleTimeout: 300, clipClear: 30, lockOnHide: true },
+  // v1.1 v2-vault state (null/empty for v1 vaults):
+  vault_format_version: 1,
+  legacy_key: null,       // CryptoKey — set for v2 vaults to decrypt v1 events from un-upgraded device streams
+  master_secret: null,    // Uint8Array(32) — v2 master secret
+  pw_key: null,           // Uint8Array(32) — Argon2id-derived; held transiently for bind/change-password; cleared on lock
+  bound_keys: []          // mirrors meta.bound_keys for UI render
 };
+
+// ── Meta helpers: bridge v1 and v2 meta shapes ──────────────
+function metaVersion(meta) {
+  return (meta && meta.vault_format_version === 2) ? 2 : 1;
+}
+function metaDevices(meta) {
+  if (!meta) return [];
+  return meta.vault_format_version === 2 ? (meta.device_roster ?? []) : (meta.devices ?? []);
+}
+function metaSetDevices(meta, arr) {
+  if (meta.vault_format_version === 2) meta.device_roster = arr;
+  else meta.devices = arr;
+}
+function metaBoundKeys(meta) {
+  return (meta && Array.isArray(meta.bound_keys)) ? meta.bound_keys : [];
+}
+function metaPwWrapEnabled(meta) {
+  // v1 vaults: password-only always enabled implicitly.
+  if (metaVersion(meta) !== 2) return true;
+  return !!(meta.pw_wrap && meta.pw_wrap.enabled);
+}
 
 // ══════════════════════════════════════════════════════════
 // IDB  (dirHandle persistence — Chrome only, silent fallback)
@@ -1291,6 +1430,30 @@ async function appendLineToStream(dir, deviceId, line) {
   await writeFileText(dir, `tijori-events-${deviceId}.jsonl`, existing + line + '\n');
 }
 
+// Atomic-ish rewrite of a stream: write .tmp first, then overwrite real,
+// then remove .tmp. FSA has no rename primitive, so this is best-effort:
+// a mid-flight crash leaves either the old file intact (failure during .tmp
+// write) or the .tmp containing the new content (failure during real write).
+// `writeFileText` itself uses FSA's createWritable which the browser
+// implements via a temp-file-and-rename internally.
+async function atomicReplaceStream(dir, deviceId, content) {
+  const realName = `tijori-events-${deviceId}.jsonl`;
+  const tmpName = `${realName}.tmp`;
+  await writeFileText(dir, tmpName, content);
+  await writeFileText(dir, realName, content);
+  try { await dir.removeEntry(tmpName); } catch {}
+}
+
+async function cleanupStaleStreamTmps(dir) {
+  try {
+    for await (const [name] of dir.entries()) {
+      if (name.startsWith('tijori-events-') && name.endsWith('.jsonl.tmp')) {
+        try { await dir.removeEntry(name); } catch {}
+      }
+    }
+  } catch {}
+}
+
 // ══════════════════════════════════════════════════════════
 // EVENT LOG
 // ══════════════════════════════════════════════════════════
@@ -1308,9 +1471,22 @@ async function appendEvent(type, payloadObj) {
     payload_ct,
     nonce
   };
+  // v2 vaults: tag the event with its format version so future readers
+  // (and this reader) can dispatch decryption on key type.
+  if (S.vault_format_version === 2) event.event_format_version = 2;
   const line = JSON.stringify(event);
   await appendLineToStream(S.dirHandle, S.deviceId, line);
   return line;
+}
+
+// Pick the right key to decrypt an event under, by its format version.
+// v1 events (no field, or =1): legacy_key if present (v2 vault with un-upgraded
+// streams), otherwise S.key (v1 vault — S.key is the PBKDF2 result).
+// v2 events: S.key (v2 vault_key).
+function _keyForEvent(ev) {
+  const v = ev.event_format_version ?? 1;
+  if (v >= 2) return S.key;
+  return S.legacy_key ?? S.key;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1346,7 +1522,7 @@ async function loadAndMerge() {
   for (const ev of allEvents) {
     if (ev.event_type !== 'device_revoked') continue;
     try {
-      const p = await decryptPayload(S.key, ev.payload_ct, ev.nonce);
+      const p = await decryptPayload(_keyForEvent(ev), ev.payload_ct, ev.nonce);
       if (!revocations[p.device_id] || p.revoked_at > revocations[p.device_id]) {
         revocations[p.device_id] = p.revoked_at;
       }
@@ -1360,7 +1536,7 @@ async function loadAndMerge() {
     if (revAt && ev.ts > revAt) continue;
 
     let p;
-    try { p = await decryptPayload(S.key, ev.payload_ct, ev.nonce); } catch { continue; }
+    try { p = await decryptPayload(_keyForEvent(ev), ev.payload_ct, ev.nonce); } catch { continue; }
 
     if (ev.event_type === 'entry_created') {
       if (!entries.has(p.id)) {
@@ -1421,11 +1597,276 @@ async function verifyAllChains() {
 }
 
 // ══════════════════════════════════════════════════════════
+// V2 KEY DERIVATION (master_secret → vault_key / wrap_key / pw_only_wrap_key)
+// ══════════════════════════════════════════════════════════
+
+// salt_kdf is the (typed) Uint8Array salt for Argon2id. password is the user
+// master password. Returns the raw 32-byte Argon2id output (pw_key).
+async function derivePwKeyArgon2(password, salt_kdf) {
+  return argon2.derive(password, salt_kdf);
+}
+
+// Build the vault_key CryptoKey (AES-GCM) from master_secret.
+async function makeVaultKey(master_secret) {
+  const bits = await hkdf32(master_secret, 'tijori-v2', 'vault-key');
+  return importAesKey(bits);
+}
+
+// Build the per-bound-key wrap key from (pw_key XOR prf_secret).
+async function makeWrapKey(pw_key, prf_secret) {
+  const combined = xor32(pw_key, prf_secret);
+  const bits = await hkdf32(combined, 'tijori-v2', 'wrap-key');
+  return importAesKey(bits);
+}
+
+// Build the password-only-fallback wrap key from pw_key alone.
+async function makePwOnlyWrapKey(pw_key) {
+  const bits = await hkdf32(pw_key, 'tijori-v2', 'pw-wrap-key');
+  return importAesKey(bits);
+}
+
+// ══════════════════════════════════════════════════════════
+// V1 → V2 MIGRATION
+// ══════════════════════════════════════════════════════════
+//
+// Re-encrypts THIS device's own event log under the new vault_key, rebuilds
+// the SHA-256 chain, atomically replaces the log file, and updates meta to v2.
+// Other devices' logs remain v1-encrypted until those devices upgrade.
+//
+// Caller must have:
+//   - S.dirHandle set (writable)
+//   - S.key set to the existing v1 PBKDF2 key (the only key that can read v1 events)
+//   - S.meta set to the existing v1 meta
+//   - S.deviceId set
+// Caller provides:
+//   - password: the master password (needed to derive new pw_key via Argon2id)
+//   - opts.afterPwWrap: 'enable' to write pw_wrap (standalone upgrade),
+//                       'omit' to skip pw_wrap (caller will write bound_keys instead)
+// Returns: { master_secret, pw_key, vault_key, vault_key_v1, kdf_salt, kdf_legacy_salt, new_meta }
+async function migrateV1toV2(password, opts = {}) {
+  if (!argon2.isReady()) {
+    await argon2.init();
+    if (!argon2.isReady()) throw new Error('Argon2id WASM not available — cannot upgrade vault');
+  }
+  if (S.vault_format_version === 2) throw new Error('Vault already v2');
+  const meta = S.meta;
+  if (!meta) throw new Error('No meta loaded');
+
+  // Old v1 key (already in S.key — this is the PBKDF2 result we need to read old events).
+  const vault_key_v1 = S.key;
+
+  // Generate v2 material.
+  const master_secret = crypto.getRandomValues(new Uint8Array(32));
+  const kdf_salt = crypto.getRandomValues(new Uint8Array(32));
+  const pw_key = await derivePwKeyArgon2(password, kdf_salt);
+  const vault_key = await makeVaultKey(master_secret);
+
+  // Preserve v1 PBKDF2 params so other devices still on v1 can read their own logs.
+  const legacySaltB64 = meta.kdf?.salt ?? null;
+  if (!legacySaltB64) throw new Error('v1 meta missing kdf.salt');
+
+  // Re-encrypt THIS device's log under vault_key, bumping event_format_version
+  // and rebuilding the prev_hash chain across the new line strings.
+  const myStream = await readStream(S.dirHandle, S.deviceId);
+  const newLines = [];
+  let prevLineForHash = null;
+  for (let i = 0; i < myStream.length; i++) {
+    let oldEv;
+    try { oldEv = JSON.parse(myStream[i]); }
+    catch { throw new Error(`Malformed event at line ${i + 1} in own stream — aborting migration`); }
+    const payload = await decryptPayload(vault_key_v1, oldEv.payload_ct, oldEv.nonce);
+    const reEnc = await encryptPayload(vault_key, payload);
+    const newEv = {
+      seq: oldEv.seq,
+      prev_hash: prevLineForHash === null ? 'genesis' : await sha256b64(prevLineForHash),
+      ts: oldEv.ts,
+      device_id: oldEv.device_id,
+      event_type: oldEv.event_type,
+      event_format_version: 2,
+      payload_ct: reEnc.payload_ct,
+      nonce: reEnc.nonce
+    };
+    const newLine = JSON.stringify(newEv);
+    newLines.push(newLine);
+    prevLineForHash = newLine;
+  }
+
+  // Append the final vault_format_upgraded event (v2-encrypted) to the new log.
+  const upgradePayload = { from: 1, to: 2 };
+  const upgEnc = await encryptPayload(vault_key, upgradePayload);
+  const upgEv = {
+    seq: newLines.length + 1,
+    prev_hash: prevLineForHash === null ? 'genesis' : await sha256b64(prevLineForHash),
+    ts: nowISO(),
+    device_id: S.deviceId,
+    event_type: 'vault_format_upgraded',
+    event_format_version: 2,
+    payload_ct: upgEnc.payload_ct,
+    nonce: upgEnc.nonce
+  };
+  newLines.push(JSON.stringify(upgEv));
+
+  // Atomic replace the on-disk log file with the v2-encrypted version.
+  await atomicReplaceStream(S.dirHandle, S.deviceId, newLines.join('\n') + '\n');
+
+  // Build v2 meta. Carry forward devices into device_roster.
+  const newMeta = {
+    format: 'tijori-v2',
+    vault_format_version: 2,
+    kdf: {
+      algorithm: 'argon2id',
+      memory_kib: ARGON2_PARAMS.memory_kib,
+      iterations: ARGON2_PARAMS.iterations,
+      parallelism: ARGON2_PARAMS.parallelism,
+      salt_kdf: b64e(kdf_salt)
+    },
+    kdf_legacy: {
+      algorithm: 'pbkdf2-sha256',
+      iterations: KDF_ITER,
+      salt_kdf: legacySaltB64
+    },
+    device_roster: (meta.devices ?? []).map(d => ({ ...d })),
+    bound_keys: [],
+    pw_wrap: { enabled: false }
+  };
+
+  if (opts.afterPwWrap === 'enable') {
+    const pwWrapKey = await makePwOnlyWrapKey(pw_key);
+    const { ct_b64, nonce_b64 } = await aesGcmWrap(pwWrapKey, master_secret);
+    newMeta.pw_wrap = { enabled: true, wrapped_master: ct_b64, wrap_nonce: nonce_b64 };
+  }
+
+  await writeMeta(S.dirHandle, newMeta);
+
+  // Update in-memory state to v2.
+  S.meta = newMeta;
+  S.vault_format_version = 2;
+  S.legacy_key = vault_key_v1;
+  S.key = vault_key;
+  S.master_secret = master_secret;
+  S.pw_key = pw_key;
+  S.bound_keys = newMeta.bound_keys;
+
+  return { master_secret, pw_key, vault_key, vault_key_v1, kdf_salt, new_meta: newMeta };
+}
+
+// Whenever this device is the one to write a new event into a v2 meta but its
+// own log is still v1, upgrade the log on the spot before appending. Returns
+// true if an upgrade was performed.
+async function upgradeOwnStreamIfNeeded() {
+  if (S.vault_format_version !== 2) return false;
+  if (!S.master_secret) return false; // must be unlocked v2
+  const myStream = await readStream(S.dirHandle, S.deviceId);
+  if (myStream.length === 0) return false;
+  let needsUpgrade = false;
+  try {
+    const first = JSON.parse(myStream[0]);
+    if ((first.event_format_version ?? 1) < 2) needsUpgrade = true;
+  } catch { return false; }
+  if (!needsUpgrade) return false;
+  if (!S.legacy_key) return false; // can't read old events without legacy key
+
+  const newLines = [];
+  let prevLineForHash = null;
+  for (let i = 0; i < myStream.length; i++) {
+    const oldEv = JSON.parse(myStream[i]);
+    let payload;
+    try { payload = await decryptPayload(_keyForEvent(oldEv), oldEv.payload_ct, oldEv.nonce); }
+    catch { throw new Error('Could not decrypt own v1 events during stream upgrade'); }
+    if ((oldEv.event_format_version ?? 1) >= 2) {
+      newLines.push(myStream[i]);
+      prevLineForHash = myStream[i];
+      continue;
+    }
+    const reEnc = await encryptPayload(S.key, payload);
+    const newEv = {
+      seq: oldEv.seq,
+      prev_hash: prevLineForHash === null ? 'genesis' : await sha256b64(prevLineForHash),
+      ts: oldEv.ts,
+      device_id: oldEv.device_id,
+      event_type: oldEv.event_type,
+      event_format_version: 2,
+      payload_ct: reEnc.payload_ct,
+      nonce: reEnc.nonce
+    };
+    const newLine = JSON.stringify(newEv);
+    newLines.push(newLine);
+    prevLineForHash = newLine;
+  }
+  // Append upgrade marker
+  const upgPayload = { from: 1, to: 2 };
+  const upgEnc = await encryptPayload(S.key, upgPayload);
+  const upgEv = {
+    seq: newLines.length + 1,
+    prev_hash: prevLineForHash === null ? 'genesis' : await sha256b64(prevLineForHash),
+    ts: nowISO(),
+    device_id: S.deviceId,
+    event_type: 'vault_format_upgraded',
+    event_format_version: 2,
+    payload_ct: upgEnc.payload_ct,
+    nonce: upgEnc.nonce
+  };
+  newLines.push(JSON.stringify(upgEv));
+
+  await atomicReplaceStream(S.dirHandle, S.deviceId, newLines.join('\n') + '\n');
+  return true;
+}
+
+// ══════════════════════════════════════════════════════════
 // VAULT OPERATIONS
 // ══════════════════════════════════════════════════════════
 
 async function createVault(dirHandle, password, deviceLabel) {
   if (!S.deviceId) { S.deviceId = uuid(); localStorage.setItem('tijori.deviceId', S.deviceId); }
+
+  // If Argon2id is available, create a v2-format vault directly (skip the v1
+  // round-trip). Otherwise fall back to v1 — existing v1.0 behaviour.
+  await argon2.init();
+  const canV2 = argon2.isReady();
+
+  if (canV2) {
+    const kdf_salt = crypto.getRandomValues(new Uint8Array(32));
+    const pw_key = await derivePwKeyArgon2(password, kdf_salt);
+    const master_secret = crypto.getRandomValues(new Uint8Array(32));
+    const vault_key = await makeVaultKey(master_secret);
+    const pwWrapKey = await makePwOnlyWrapKey(pw_key);
+    const { ct_b64, nonce_b64 } = await aesGcmWrap(pwWrapKey, master_secret);
+
+    const meta = {
+      format: 'tijori-v2',
+      vault_format_version: 2,
+      kdf: {
+        algorithm: 'argon2id',
+        memory_kib: ARGON2_PARAMS.memory_kib,
+        iterations: ARGON2_PARAMS.iterations,
+        parallelism: ARGON2_PARAMS.parallelism,
+        salt_kdf: b64e(kdf_salt)
+      },
+      // No kdf_legacy on a brand-new v2 vault — there are no v1 events to read.
+      device_roster: [{ id: S.deviceId, label: deviceLabel, registered_at: nowISO() }],
+      bound_keys: [],
+      pw_wrap: { enabled: true, wrapped_master: ct_b64, wrap_nonce: nonce_b64 }
+    };
+    await writeMeta(dirHandle, meta);
+
+    S.key = vault_key;
+    S.legacy_key = null;
+    S.master_secret = master_secret;
+    S.pw_key = pw_key;
+    S.vault_format_version = 2;
+    S.dirHandle = dirHandle;
+    S.meta = meta;
+    S.bound_keys = meta.bound_keys;
+    S.deviceLabel = deviceLabel;
+    S.salt = null;
+    localStorage.setItem('tijori.deviceLabel', deviceLabel);
+    if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+    await appendEvent('device_registered', { device_id: S.deviceId, label: deviceLabel });
+    S.entries = new Map();
+    return;
+  }
+
+  // v1 fallback (Argon2id WASM not inlined yet)
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await deriveKey(password, salt);
   const meta = {
@@ -1436,6 +1877,8 @@ async function createVault(dirHandle, password, deviceLabel) {
   await writeMeta(dirHandle, meta);
   S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
   S.deviceLabel = deviceLabel;
+  S.vault_format_version = 1;
+  S.legacy_key = null; S.master_secret = null; S.pw_key = null; S.bound_keys = [];
   localStorage.setItem('tijori.deviceLabel', deviceLabel);
   if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
   await appendEvent('device_registered', { device_id: S.deviceId, label: deviceLabel });
@@ -1445,6 +1888,53 @@ async function createVault(dirHandle, password, deviceLabel) {
 async function unlockVault(dirHandle, password) {
   const meta = await readMeta(dirHandle);
   if (!meta) throw new Error('No vault found in this folder.');
+
+  const v = metaVersion(meta);
+  if (v === 2) {
+    if (!metaPwWrapEnabled(meta)) {
+      throw new Error('Password-only unlock is disabled for this vault. Use your hardware key.');
+    }
+    await argon2.init();
+    if (!argon2.isReady()) {
+      throw new Error('Argon2id WASM is not loaded in this build, so v2 vaults can\'t be unlocked here.');
+    }
+    const kdf_salt = b64d(meta.kdf.salt_kdf);
+    const pw_key = await derivePwKeyArgon2(password, kdf_salt);
+    const pwWrapKey = await makePwOnlyWrapKey(pw_key);
+    let master_secret;
+    try {
+      master_secret = await aesGcmUnwrap(pwWrapKey, meta.pw_wrap.wrapped_master, meta.pw_wrap.wrap_nonce);
+    } catch { throw new Error('Wrong master password.'); }
+    const vault_key = await makeVaultKey(master_secret);
+
+    // If meta has kdf_legacy, derive the v1 key too so we can read any
+    // un-upgraded device streams.
+    let legacy_key = null;
+    if (meta.kdf_legacy && meta.kdf_legacy.salt_kdf) {
+      const legacySalt = b64d(meta.kdf_legacy.salt_kdf);
+      try { legacy_key = await deriveKeyPbkdf2(password, legacySalt); } catch {}
+    }
+
+    S.key = vault_key;
+    S.legacy_key = legacy_key;
+    S.master_secret = master_secret;
+    S.pw_key = pw_key;
+    S.vault_format_version = 2;
+    S.dirHandle = dirHandle;
+    S.meta = meta;
+    S.bound_keys = metaBoundKeys(meta);
+    S.salt = null;
+    if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
+    if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
+    if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+    await cleanupStaleStreamTmps(dirHandle);
+    await loadAndMerge();
+    const saved = localStorage.getItem('tijori.settings');
+    if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
+    return;
+  }
+
+  // v1 path (unchanged from v1.0)
   const salt = b64d(meta.kdf.salt);
   const key = await deriveKey(password, salt);
 
@@ -1461,6 +1951,8 @@ async function unlockVault(dirHandle, password) {
   }
 
   S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
+  S.vault_format_version = 1;
+  S.legacy_key = null; S.master_secret = null; S.pw_key = null; S.bound_keys = [];
   if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
   if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
   if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
@@ -1469,9 +1961,106 @@ async function unlockVault(dirHandle, password) {
   if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
 }
 
+// v2 hardware-key unlock: both factors (master password + bound key PRF).
+// Uses the assertion already gathered by the UI layer (see handleUnlockWithKey).
+async function unlockVaultWithKey(dirHandle, password, credIdB64url, prf_secret) {
+  const meta = await readMeta(dirHandle);
+  if (!meta) throw new Error('No vault found in this folder.');
+  if (metaVersion(meta) !== 2) throw new Error('Vault is not v2; hardware-key unlock unavailable.');
+  await argon2.init();
+  if (!argon2.isReady()) throw new Error('Argon2id WASM is not loaded — cannot unlock v2 vaults.');
+
+  const bk = metaBoundKeys(meta).find(k => k.credential_id === credIdB64url);
+  if (!bk) throw new Error('Hardware key not registered with this vault.');
+
+  const kdf_salt = b64d(meta.kdf.salt_kdf);
+  const pw_key = await derivePwKeyArgon2(password, kdf_salt);
+  const wrapKey = await makeWrapKey(pw_key, prf_secret);
+  let master_secret;
+  try {
+    master_secret = await aesGcmUnwrap(wrapKey, bk.wrapped_master, bk.wrap_nonce);
+  } catch { throw new Error('Master password or hardware key incorrect.'); }
+  const vault_key = await makeVaultKey(master_secret);
+
+  let legacy_key = null;
+  if (meta.kdf_legacy && meta.kdf_legacy.salt_kdf) {
+    const legacySalt = b64d(meta.kdf_legacy.salt_kdf);
+    try { legacy_key = await deriveKeyPbkdf2(password, legacySalt); } catch {}
+  }
+
+  S.key = vault_key;
+  S.legacy_key = legacy_key;
+  S.master_secret = master_secret;
+  S.pw_key = pw_key;
+  S.vault_format_version = 2;
+  S.dirHandle = dirHandle;
+  S.meta = meta;
+  S.bound_keys = metaBoundKeys(meta);
+  S.salt = null;
+  if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
+  if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
+  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+  await cleanupStaleStreamTmps(dirHandle);
+  await loadAndMerge();
+  const saved = localStorage.getItem('tijori.settings');
+  if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
+}
+
 async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
   const meta = await readMeta(dirHandle);
   if (!meta) throw new Error('Not a Tijori vault.');
+
+  const v = metaVersion(meta);
+  if (v === 2) {
+    // v2: register requires password-only unwrap (pw_wrap must be enabled).
+    // Hardware-key-only vaults can't register new devices through this UI;
+    // user must unlock with key first then register from Settings → Devices.
+    if (!metaPwWrapEnabled(meta)) {
+      throw new Error('This vault has hardware-key-only unlock. Register from an already-unlocked device.');
+    }
+    await argon2.init();
+    if (!argon2.isReady()) {
+      throw new Error('Argon2id WASM is not loaded — cannot register on a v2 vault from this build.');
+    }
+    const kdf_salt = b64d(meta.kdf.salt_kdf);
+    const pw_key = await derivePwKeyArgon2(password, kdf_salt);
+    const pwWrapKey = await makePwOnlyWrapKey(pw_key);
+    let master_secret;
+    try {
+      master_secret = await aesGcmUnwrap(pwWrapKey, meta.pw_wrap.wrapped_master, meta.pw_wrap.wrap_nonce);
+    } catch { throw new Error('Wrong master password.'); }
+    const vault_key = await makeVaultKey(master_secret);
+
+    let legacy_key = null;
+    if (meta.kdf_legacy && meta.kdf_legacy.salt_kdf) {
+      const legacySalt = b64d(meta.kdf_legacy.salt_kdf);
+      try { legacy_key = await deriveKeyPbkdf2(password, legacySalt); } catch {}
+    }
+
+    S.key = vault_key;
+    S.legacy_key = legacy_key;
+    S.master_secret = master_secret;
+    S.pw_key = pw_key;
+    S.vault_format_version = 2;
+    S.dirHandle = dirHandle;
+    S.meta = meta;
+    S.bound_keys = metaBoundKeys(meta);
+    S.deviceId = deviceId; S.deviceLabel = deviceLabel;
+    S.salt = null;
+    localStorage.setItem('tijori.deviceId', deviceId);
+    localStorage.setItem('tijori.deviceLabel', deviceLabel);
+
+    meta.device_roster = (meta.device_roster ?? []).concat([{ id: deviceId, label: deviceLabel, registered_at: nowISO() }]);
+    await writeMeta(dirHandle, meta);
+    if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+    await appendEvent('device_registered', { device_id: deviceId, label: deviceLabel });
+    await loadAndMerge();
+    const saved = localStorage.getItem('tijori.settings');
+    if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
+    return;
+  }
+
+  // v1 path
   const salt = b64d(meta.kdf.salt);
   const key = await deriveKey(password, salt);
 
@@ -1487,6 +2076,8 @@ async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
   }
 
   S.key = key; S.salt = salt; S.dirHandle = dirHandle; S.meta = meta;
+  S.vault_format_version = 1;
+  S.legacy_key = null; S.master_secret = null; S.pw_key = null; S.bound_keys = [];
   S.deviceId = deviceId; S.deviceLabel = deviceLabel;
   localStorage.setItem('tijori.deviceId', deviceId);
   localStorage.setItem('tijori.deviceLabel', deviceLabel);
@@ -1507,16 +2098,56 @@ async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
 function lock() {
   stopCodesTicker();
   S.key = null; S.salt = null; S.entries = new Map();
+  // Wipe v2-specific in-memory secrets. All are sensitive material.
+  S.legacy_key = null;
+  if (S.master_secret) { S.master_secret.fill(0); }
+  S.master_secret = null;
+  if (S.pw_key) { S.pw_key.fill(0); }
+  S.pw_key = null;
+  S.bound_keys = [];
   Object.values(S.clipTimers).forEach(t => clearTimeout(t));
   S.clipTimers = {};
   clearTimeout(S.idleTimer);
-  $('unlock-folder-tag').textContent = S._isOpfs ? (S._opfsVaultName ?? '') : (S.dirHandle?.name ?? '');
-  $('unlock-diff-btn').textContent = S._isOpfs ? 'Different vault' : 'Different folder';
-  $('unlock-hint').textContent = '';
-  $('unlock-pass').value = '';
+  prepareUnlockScreen();
   hideAllModals();
   showScreen('unlock');
   naklios.title('Tijori');
+}
+
+function prepareUnlockScreen() {
+  const folder = S._isOpfs ? (S._opfsVaultName ?? '') : (S.dirHandle?.name ?? '');
+  const tag = $('unlock-folder-tag'); if (tag) tag.textContent = folder;
+  const diffBtn = $('unlock-diff-btn');
+  if (diffBtn) diffBtn.textContent = S._isOpfs ? 'Different vault' : 'Different folder';
+  const hint = $('unlock-hint'); if (hint) hint.textContent = '';
+  const pass = $('unlock-pass'); if (pass) pass.value = '';
+  // v1.1: show "Unlock with hardware key" primary action when meta has bound keys
+  const hwRow = $('unlock-hw-row');
+  const pwRow = $('unlock-pw-row');
+  const hwOnlyNote = $('unlock-hw-only-note');
+  const pwLink = $('unlock-pw-link');
+  const bound = (S.meta && metaBoundKeys(S.meta)) || [];
+  const pwAllowed = !S.meta || metaPwWrapEnabled(S.meta);
+  if (hwRow && pwRow) {
+    if (bound.length > 0) {
+      hwRow.style.display = '';
+      // If password-only is disabled, hide password input by default; show via link.
+      if (pwAllowed) {
+        pwRow.style.display = '';
+        if (pwLink) pwLink.style.display = 'none';
+        if (hwOnlyNote) hwOnlyNote.style.display = 'none';
+      } else {
+        pwRow.style.display = 'none';
+        if (pwLink) pwLink.style.display = 'none';
+        if (hwOnlyNote) hwOnlyNote.style.display = '';
+      }
+    } else {
+      hwRow.style.display = 'none';
+      pwRow.style.display = '';
+      if (pwLink) pwLink.style.display = 'none';
+      if (hwOnlyNote) hwOnlyNote.style.display = 'none';
+    }
+  }
 }
 
 function resetIdleTimer() {
@@ -1973,8 +2604,10 @@ function saveSettings() {
 
 function renderDeviceRoster() {
   const list = $('device-list');
-  if (!list || !S.meta?.devices) return;
-  list.innerHTML = S.meta.devices.map(d => `
+  if (!list || !S.meta) return;
+  const roster = metaDevices(S.meta);
+  if (!roster.length) { list.innerHTML = ''; return; }
+  list.innerHTML = roster.map(d => `
     <div class="device-item">
       <div>
         <div class="device-name">${escHtml(d.label)}${d.id === S.deviceId ? '<span class="badge">this device</span>' : ''}</div>
@@ -2394,14 +3027,12 @@ async function handleOpenExisting() {
     await idbSet('dirHandle', dir);
 
     const storedId = localStorage.getItem('tijori.deviceId');
-    const registered = meta.devices.some(d => d.id === storedId);
+    const registered = metaDevices(meta).some(d => d.id === storedId);
 
     if (registered) {
       S.deviceId = storedId;
       S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown';
-      $('unlock-folder-tag').textContent = dir.name;
-      $('unlock-diff-btn').textContent = 'Different folder';
-      $('unlock-hint').textContent = '';
+      prepareUnlockScreen();
       showScreen('unlock');
     } else {
       $('register-folder-tag').textContent = dir.name;
@@ -2421,13 +3052,11 @@ async function _openOpfsVault(name) {
     S.meta = meta; S.dirHandle = dir; S._isOpfs = true; S._opfsVaultName = name;
     await idbSet('opfsVaultName', name);
     const storedId = localStorage.getItem('tijori.deviceId');
-    const registered = meta.devices.some(d => d.id === storedId);
+    const registered = metaDevices(meta).some(d => d.id === storedId);
     if (registered) {
       S.deviceId = storedId;
       S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown';
-      $('unlock-folder-tag').textContent = name;
-      $('unlock-diff-btn').textContent = 'Different vault';
-      $('unlock-hint').textContent = '';
+      prepareUnlockScreen();
       showScreen('unlock');
     } else {
       $('register-folder-tag').textContent = name;
@@ -2459,7 +3088,10 @@ async function handleReconnect() {
     const perm = await handle.requestPermission({ mode: 'readwrite' });
     if (perm === 'granted') {
       S.dirHandle = handle; S._pendingHandle = null;
-      $('unlock-folder-tag').textContent = handle.name;
+      // Re-read meta now that we have permission, so prepareUnlockScreen sees
+      // the right bound_keys / pw_wrap state.
+      try { S.meta = await readMeta(handle); } catch {}
+      prepareUnlockScreen();
       showScreen('unlock');
     }
   } catch (e) { toast(e.message, { error: true }); }
@@ -2773,8 +3405,7 @@ async function init() {
       const meta = await readMeta(dir);
       if (meta) {
         S.dirHandle = dir; S.meta = meta; S._isOpfs = true; S._opfsVaultName = opfsName;
-        $('unlock-folder-tag').textContent = opfsName;
-        $('unlock-diff-btn').textContent = 'Different vault';
+        prepareUnlockScreen();
         showScreen('unlock');
         return;
       }
@@ -2790,7 +3421,7 @@ async function init() {
         const meta = await readMeta(stored);
         if (meta) {
           S.dirHandle = stored; S.meta = meta;
-          $('unlock-folder-tag').textContent = stored.name;
+          prepareUnlockScreen();
           showScreen('unlock');
           return;
         }
