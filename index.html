@@ -1084,6 +1084,7 @@ textarea { resize: vertical; min-height: 80px; }
     <div class="tab-row" style="margin-bottom:14px">
       <button class="active" onclick="switchHelpTab('about',this)">About</button>
       <button onclick="switchHelpTab('usage',this)">Usage</button>
+      <button onclick="switchHelpTab('security',this)">Security</button>
       <button onclick="switchHelpTab('sync',this)">Sync</button>
       <button onclick="switchHelpTab('format',this)">Format</button>
     </div>
@@ -1121,6 +1122,36 @@ textarea { resize: vertical; min-height: 80px; }
         <li><span class="kbd">Esc</span> — close modal / clear search</li>
       </ul>
     </div>
+    <div id="help-security" class="help-body tab-pane">
+      <h4>Hardware keys</h4>
+      <p>Tijori can use any FIDO2 / WebAuthn authenticator as a second factor: YubiKeys, Touch ID, Windows Hello, iCloud passkeys, Android passkeys.</p>
+      <p>Both the master password <strong>and</strong> the hardware key are required to unlock — losing either alone keeps the vault safe; losing both is the only way in.</p>
+      <p>To bind a key: Settings &rarr; Security &rarr; Bind a hardware key. You'll be prompted for your master password (this is normal — we re-derive the encryption material) and then asked to touch your key.</p>
+      <p><strong>Always bind a backup key.</strong> A single key with no fallback can lock you out permanently if the key is lost or breaks. Tijori reminds you until you've either bound two keys or explicitly enabled password-only fallback.</p>
+      <p>Synced passkeys (iCloud, Google) work with Tijori but exist in cloud-synced form. If you want a strictly device-bound second factor, use a dedicated hardware key like a YubiKey.</p>
+      <p>Requires Chrome 116+, Edge 116+, or Safari 18+. Firefox: not yet.</p>
+
+      <h4>Key derivation</h4>
+      <p>Vaults created in v1.1+ use <strong>Argon2id</strong> (m=64MB, t=3, p=4) — a memory-hard function designed to resist GPU and ASIC attacks.</p>
+      <p>Vaults created before v1.1 use <strong>PBKDF2-SHA-256</strong> at 600,000 iterations (still strong, but older). They auto-upgrade to Argon2id on next save.</p>
+      <p>When a hardware key is bound, the password-derived key is XOR-mixed with a 32-byte secret derived from the key (via WebAuthn PRF), then HKDF-expanded into the wrap key. The vault's master secret is wrapped per bound key. Adding or removing keys never re-encrypts your data — only the wrap blobs change.</p>
+      <p>Verify the implementation: every line is in <code>index.html</code>. Read it.</p>
+
+      <h4>Network and privacy</h4>
+      <p>Tijori makes zero network requests after the page loads. This is enforced by Content-Security-Policy: <code>connect-src 'none'</code>.</p>
+      <p>Open DevTools &rarr; Network panel and watch. Reload Tijori. After the initial document, nothing else fetches. Any attempted XHR, fetch, WebSocket, sendBeacon, or EventSource would appear in the console as a CSP violation.</p>
+      <p>This includes WebAuthn: calls into your authenticator (YubiKey, Touch ID, etc.) are browser-to-device APIs, not network calls. Nothing leaves your machine.</p>
+      <p>No analytics. No telemetry. No "anonymous usage stats." No bug reporting service. If something breaks, file an issue on GitHub.</p>
+
+      <h4>If you lose your master password</h4>
+      <p>The vault is unrecoverable. We never see your password and never store it anywhere. By design, there is no recovery.</p>
+      <p>Back up your password the same way you back up your vault — a sealed envelope in a safe, a hardware password manager, written on paper somewhere only you know.</p>
+
+      <h4>If you lose your hardware key</h4>
+      <p>Use one of your other bound keys, or your password-only fallback if you enabled it. Then go to Settings &rarr; Security and remove the lost key from the vault. Register a replacement.</p>
+      <p>If you bound only one key, with no password-only fallback, and that key is gone, the vault is unrecoverable. This is why Tijori nags you to bind two keys.</p>
+    </div>
+
     <div id="help-sync" class="help-body tab-pane">
       <h4>How sync works</h4>
       <p>Each device writes only its own log file (<code>tijori-events-&lt;deviceId&gt;.jsonl</code>). Sync is the act of making all devices see all files. Tijori merges them on every unlock — deterministically, regardless of order.</p>
@@ -1147,9 +1178,11 @@ textarea { resize: vertical; min-height: 80px; }
       <p><code>{"seq":1,"prev_hash":"genesis","ts":"…","device_id":"…","event_type":"entry_created","payload_ct":"…","nonce":"…"}</code></p>
       <h4>Crypto</h4>
       <ul>
-        <li>KDF: PBKDF2-SHA-256, 600 000 iterations.</li>
+        <li>KDF (v2 vaults): Argon2id, m=64MB, t=3, p=4 (memory-hard, GPU-resistant). WASM inlined, no CDN.</li>
+        <li>KDF (v1 vaults): PBKDF2-SHA-256, 600,000 iterations. Auto-upgrades to Argon2id on next save.</li>
         <li>Per-event encryption: AES-256-GCM, random 12-byte nonce.</li>
         <li>Hash chain: SHA-256 over previous raw line string.</li>
+        <li>Hardware-key binding (optional): WebAuthn PRF extension. <code>master_secret</code> wrapped per bound key with HKDF over <code>(pw_key XOR prf_secret)</code>.</li>
       </ul>
       <h4>Merge</h4>
       <p>Union all events, sort by <code>(ts, device_id)</code>, apply in order. Per-field last-writer-wins — each field carries its own timestamp, so two devices editing different fields of the same entry both win their field.</p>
