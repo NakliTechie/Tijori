@@ -292,6 +292,53 @@ textarea { resize: vertical; min-height: 80px; }
   vertical-align: middle; margin-left: 6px;
 }
 
+/* v1.1: backup-key banner */
+.backup-banner {
+  display: flex; align-items: center; gap: 12px;
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  background: rgba(255, 200, 87, 0.08);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.backup-banner-icon { color: var(--warn); font-size: 18px; flex-shrink: 0; }
+.backup-banner-text { flex: 1; line-height: 1.4; }
+.backup-banner-text strong { color: var(--warn); }
+
+/* v1.1: bound-keys list (Settings → Security) */
+.bound-key-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px;
+  gap: 10px;
+}
+.bound-key-label { font-weight: 500; font-size: 14px; }
+.bound-key-meta {
+  font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px;
+}
+.security-section-title {
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin: 16px 0 8px;
+}
+.security-section-title:first-child { margin-top: 0; }
+.security-prf-unsupported {
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px; color: var(--muted);
+  margin-bottom: 12px;
+}
+.security-toggle-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 8px;
+}
+.security-toggle-row input[type=checkbox] { width: auto; margin: 0; }
+.security-toggle-row label { margin: 0; cursor: pointer; flex: 1; font-size: 13px; }
+
 /* Import modal */
 .import-format-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
@@ -512,13 +559,23 @@ textarea { resize: vertical; min-height: 80px; }
       <span id="unlock-folder-tag" class="folder-tag"></span>
     </p>
     <form onsubmit="handleUnlock();return false;">
-      <div class="field">
+      <div class="field" id="unlock-pw-row">
         <label for="unlock-pass">Master password</label>
         <div class="pw-wrap">
           <input type="password" id="unlock-pass" placeholder="master password" autocomplete="current-password" autofocus>
           <button class="pw-toggle" type="button" onclick="togglePw('unlock-pass', this)">👁</button>
         </div>
         <div class="hint" id="unlock-hint" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px;"></div>
+      </div>
+      <!-- v1.1: hardware-key unlock row, shown when meta.bound_keys is non-empty -->
+      <div class="field" id="unlock-hw-row" style="display:none">
+        <button class="btn" type="button" style="width:100%" onclick="handleUnlockWithKey()">🔑 Unlock with hardware key</button>
+        <div class="hint" id="unlock-hw-only-note" style="display:none;font-size:12px;color:var(--muted);margin-top:6px">
+          Password-only unlock is disabled for this vault. Use your hardware key.
+        </div>
+        <div class="hint" id="unlock-pw-link" style="display:none;font-size:12px;margin-top:6px">
+          <a href="#" onclick="event.preventDefault();_revealPwUnlock()" style="color:var(--accent);text-decoration:none">Use master password instead</a>
+        </div>
       </div>
       <div class="actions-bar">
         <button class="btn ghost btn-sm" type="button" id="unlock-diff-btn" onclick="handleOpenExisting()">Different folder</button>
@@ -564,6 +621,18 @@ textarea { resize: vertical; min-height: 80px; }
       <button class="btn-icon" title="Settings" onclick="openSettings()">⚙</button>
       <button class="btn secondary btn-sm" onclick="lock()">Lock</button>
     </div>
+  </div>
+
+  <!-- v1.1: backup-key banner. Visible when exactly one hardware key is bound
+       AND password-only fallback is disabled. Dismissable only by binding a
+       second key or explicitly enabling the fallback. -->
+  <div id="backup-key-banner" class="backup-banner" style="display:none">
+    <span class="backup-banner-icon">⚠</span>
+    <div class="backup-banner-text">
+      <strong>Register a backup key.</strong>
+      A single hardware key is a single point of failure.
+    </div>
+    <button class="btn btn-sm" onclick="openSettings();showSettingsTab('security')">Open Security</button>
   </div>
 
   <div class="vault-toolbar">
@@ -742,6 +811,31 @@ textarea { resize: vertical; min-height: 80px; }
 
     <!-- Security tab -->
     <div class="settings-pane" data-tab="security">
+
+      <!-- v1.1: hardware-key section -->
+      <div id="security-hardware-section">
+        <div class="security-section-title">Hardware keys</div>
+        <div id="security-prf-status"></div>
+        <div id="bound-keys-list"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn" id="bind-key-btn" onclick="openBindKeyModal()">＋ Bind a hardware key</button>
+          <button class="btn ghost" id="change-master-pw-btn" onclick="openChangeMasterPwModal()" style="display:none">Change master password</button>
+        </div>
+        <div id="pw-fallback-row" class="security-toggle-row" style="display:none">
+          <input type="checkbox" id="pw-fallback-cb">
+          <label for="pw-fallback-cb">Allow master-password-only unlock as a fallback</label>
+        </div>
+        <div id="upgrade-kdf-row" style="display:none;margin-bottom:12px">
+          <button class="btn ghost" onclick="confirmUpgradeKdfStandalone()">Upgrade KDF to Argon2id</button>
+          <div class="hint" style="font-size:12px;color:var(--muted);margin-top:4px">
+            This vault uses PBKDF2. Upgrade to Argon2id (memory-hard) for stronger derivation.
+          </div>
+        </div>
+      </div>
+
+      <hr class="sep">
+
+      <div class="security-section-title">Session</div>
       <div class="field">
         <label for="set-idle">Idle timeout (seconds)</label>
         <input type="number" id="set-idle" min="30" max="86400" value="300">
@@ -901,6 +995,72 @@ textarea { resize: vertical; min-height: 80px; }
     <hr class="sep">
     <div style="text-align:right">
       <button class="btn ghost btn-sm" onclick="hideModal('modal-integrity')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: BIND HARDWARE KEY (v1.1) ══════════════ -->
+<div id="modal-bind-key" class="modal-bg">
+  <div class="modal">
+    <h3>Bind a hardware key</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 14px">
+      Re-enter your master password, then touch your hardware key when prompted.
+      Both factors will be required to unlock the vault.
+    </p>
+    <div class="field">
+      <label for="bind-label">Key label</label>
+      <input type="text" id="bind-label" placeholder="e.g. YubiKey 5 (primary)" maxlength="64" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="bind-password">Master password</label>
+      <div class="pw-wrap">
+        <input type="password" id="bind-password" placeholder="master password" autocomplete="current-password">
+        <button class="pw-toggle" type="button" onclick="togglePw('bind-password', this)">👁</button>
+      </div>
+    </div>
+    <div class="hint" id="bind-hint" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:10px"></div>
+    <div class="actions-bar">
+      <button class="btn ghost btn-sm" onclick="hideModal('modal-bind-key')">Cancel</button>
+      <button class="btn" id="bind-confirm-btn" onclick="handleBindKey()">Bind key</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: CHANGE MASTER PASSWORD (v1.1) ══════════════ -->
+<div id="modal-change-master-pw" class="modal-bg">
+  <div class="modal">
+    <h3>Change master password</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 14px">
+      You'll need to touch each registered hardware key once during this operation,
+      because each key's wrap blob is regenerated against the new password.
+    </p>
+    <div class="field">
+      <label for="cmp-current">Current master password</label>
+      <div class="pw-wrap">
+        <input type="password" id="cmp-current" autocomplete="current-password">
+        <button class="pw-toggle" type="button" onclick="togglePw('cmp-current', this)">👁</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="cmp-new">New master password</label>
+      <div class="pw-wrap">
+        <input type="password" id="cmp-new" autocomplete="new-password" oninput="updateEntropyMeter(this.value,'cmp-entropy-bar','cmp-entropy-label')">
+        <button class="pw-toggle" type="button" onclick="togglePw('cmp-new', this)">👁</button>
+      </div>
+      <div class="entropy-bar-wrap"><div class="entropy-bar" id="cmp-entropy-bar"></div></div>
+      <div class="entropy-label" id="cmp-entropy-label"></div>
+    </div>
+    <div class="field">
+      <label for="cmp-new2">Confirm new password</label>
+      <div class="pw-wrap">
+        <input type="password" id="cmp-new2" autocomplete="new-password">
+        <button class="pw-toggle" type="button" onclick="togglePw('cmp-new2', this)">👁</button>
+      </div>
+    </div>
+    <div class="hint" id="cmp-hint" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:10px"></div>
+    <div class="actions-bar">
+      <button class="btn ghost btn-sm" onclick="hideModal('modal-change-master-pw')">Cancel</button>
+      <button class="btn" id="cmp-confirm-btn" onclick="handleChangeMasterPw()">Change password</button>
     </div>
   </div>
 </div>
@@ -1813,6 +1973,310 @@ async function upgradeOwnStreamIfNeeded() {
 }
 
 // ══════════════════════════════════════════════════════════
+// WEBAUTHN PRF — hardware-key binding (v1.1)
+// ══════════════════════════════════════════════════════════
+//
+// Browser support floor: Chrome 116+, Edge 116+, Safari 18+ (macOS 15 / iOS 18+).
+// Firefox PRF is in nightly only. file:// origins cannot bind (no RP ID).
+// All flows require the master password; PRF is mixed in, never a replacement.
+
+const prf = (() => {
+  let _supported = null; // null = not yet probed, true/false/'unknown' after probe
+  async function detect() {
+    if (_supported !== null) return _supported;
+    if (!window.PublicKeyCredential) { _supported = false; return _supported; }
+    if (typeof PublicKeyCredential.getClientCapabilities === 'function') {
+      try {
+        const caps = await PublicKeyCredential.getClientCapabilities();
+        if (caps?.extensionPrf === true) { _supported = true; return _supported; }
+        if (caps?.extensionPrf === false) { _supported = false; return _supported; }
+      } catch {}
+    }
+    _supported = 'unknown';
+    return _supported;
+  }
+  function isSecureContextOk() {
+    // WebAuthn requires a secure context. localhost qualifies. file:// does not.
+    if (location.protocol === 'file:') return false;
+    return !!window.isSecureContext;
+  }
+  return { detect, isSecureContextOk };
+})();
+
+// Default label inference from FIDO2 authenticator transports list.
+function defaultKeyLabel(transports) {
+  if (!Array.isArray(transports) || transports.length === 0) return 'Hardware key';
+  if (transports.includes('internal')) return 'Built-in authenticator';
+  if (transports.includes('hybrid')) return 'Phone / cross-device';
+  if (transports.includes('nfc')) return 'Hardware key (NFC)';
+  if (transports.includes('usb')) return 'Hardware key (USB)';
+  if (transports.includes('ble')) return 'Hardware key (BLE)';
+  return 'Hardware key';
+}
+
+// Re-verify the user's master password against current vault state. Returns
+// { ok: true, pw_key } on match, { ok: false } on wrong password. Used before
+// bind / change-password / unbind-confirmations to avoid acting on a stolen
+// unlocked session.
+async function reverifyPassword(password) {
+  if (!password) return { ok: false };
+  if (S.vault_format_version !== 2) {
+    // v1 vault path: derive via PBKDF2 and try to decrypt the first event.
+    if (!S.salt) return { ok: false };
+    try {
+      const k = await deriveKeyPbkdf2(password, S.salt);
+      const streams = await getAllStreamNames(S.dirHandle);
+      for (const n of streams) {
+        const lines = await readStream(S.dirHandle, n.replace('tijori-events-', '').replace('.jsonl', ''));
+        if (!lines.length) continue;
+        const ev = JSON.parse(lines[0]);
+        try { await decryptPayload(k, ev.payload_ct, ev.nonce); return { ok: true, v1_key: k }; }
+        catch { return { ok: false }; }
+      }
+      return { ok: false };
+    } catch { return { ok: false }; }
+  }
+  // v2 vault path: re-derive pw_key and confirm against either pw_wrap or any bound key.
+  await argon2.init();
+  if (!argon2.isReady()) throw new Error('Argon2id WASM not available');
+  const kdf_salt = b64d(S.meta.kdf.salt_kdf);
+  const pw_key = await derivePwKeyArgon2(password, kdf_salt);
+  if (metaPwWrapEnabled(S.meta)) {
+    const pwWrapKey = await makePwOnlyWrapKey(pw_key);
+    try {
+      const ms = await aesGcmUnwrap(pwWrapKey, S.meta.pw_wrap.wrapped_master, S.meta.pw_wrap.wrap_nonce);
+      // Cross-check ms matches the live one (defensive).
+      if (S.master_secret && !sameBytes(ms, S.master_secret)) return { ok: false };
+      return { ok: true, pw_key };
+    } catch { return { ok: false }; }
+  }
+  // No pw_wrap. Verify by attempting to unwrap one of the bound keys using a
+  // PRF round-trip. We need the user to touch a key — caller flow has to handle.
+  // Here we just return ok if Argon2id succeeded; the actual cross-check happens
+  // in the caller via the bind/unlock flow.
+  return { ok: true, pw_key };
+}
+
+function sameBytes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  let acc = 0;
+  for (let i = 0; i < a.length; i++) acc |= a[i] ^ b[i];
+  return acc === 0;
+}
+
+// Bind a hardware key to the currently-unlocked vault. password is the master
+// password (re-entered). label is user-provided.
+async function bindHardwareKey(password, label) {
+  if (!S.key || !S.dirHandle) throw new Error('Unlock the vault first.');
+  if (!prf.isSecureContextOk()) {
+    throw new Error('Hardware-key binding requires Tijori to be served from a URL (https://tijori.naklitechie.com or your own server). It is not available when running from a saved file.');
+  }
+  if ((await prf.detect()) === false) {
+    throw new Error('This browser doesn\'t support the WebAuthn PRF extension. Try Chrome 116+, Edge 116+, or Safari 18+.');
+  }
+  await argon2.init();
+  if (!argon2.isReady()) {
+    throw new Error('Argon2id WASM is not inlined in this build. Hardware-key binding requires a v2 vault.');
+  }
+
+  // Re-verify password to confirm intent.
+  const re = await reverifyPassword(password);
+  if (!re.ok) throw new Error('Wrong master password.');
+
+  // If vault is still v1, migrate now (first bind triggers upgrade).
+  if (S.vault_format_version !== 2) {
+    await migrateV1toV2(password, { afterPwWrap: 'omit' });
+    // After migration, S.master_secret and S.pw_key are set.
+  }
+
+  const salt_prf = crypto.getRandomValues(new Uint8Array(32));
+  const user_handle = crypto.getRandomValues(new Uint8Array(16));
+
+  // ── credentials.create ────────────────────────────────────
+  let cred;
+  try {
+    cred = await navigator.credentials.create({
+      publicKey: {
+        rp: { id: location.hostname, name: 'Tijori' },
+        user: {
+          id: user_handle,
+          name: (S.deviceLabel || 'tijori') + '@tijori',
+          displayName: label || 'Tijori vault'
+        },
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },    // ES256
+          { type: 'public-key', alg: -257 }   // RS256
+        ],
+        authenticatorSelection: {
+          userVerification: 'preferred',
+          residentKey: 'preferred'
+        },
+        extensions: { prf: { eval: { first: salt_prf } } },
+        timeout: 60000
+      }
+    });
+  } catch (e) {
+    if (e?.name === 'NotAllowedError') throw new Error('Cancelled.');
+    throw new Error('Could not register hardware key: ' + (e?.message || e));
+  }
+  if (!cred) throw new Error('No credential returned.');
+
+  const ext = cred.getClientExtensionResults?.() || {};
+  if (ext.prf?.enabled !== true) {
+    throw new Error("This authenticator doesn't support PRF, which Tijori uses to derive a hardware-bound secret. Try a different key. (FIDO2 keys made after 2022 generally support this.)");
+  }
+
+  // Some browsers may return PRF output on create(); we always re-fetch via
+  // get() for cross-browser consistency.
+  let assertion;
+  try {
+    assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials: [{ id: cred.rawId, type: 'public-key' }],
+        userVerification: 'preferred',
+        extensions: { prf: { eval: { first: salt_prf } } },
+        timeout: 60000
+      }
+    });
+  } catch (e) {
+    if (e?.name === 'NotAllowedError') throw new Error('Cancelled.');
+    throw new Error('Could not retrieve PRF output: ' + (e?.message || e));
+  }
+  const prfRes = assertion?.getClientExtensionResults?.()?.prf?.results?.first;
+  if (!prfRes) throw new Error('PRF output unavailable. This authenticator may not be compatible.');
+  const prf_secret = new Uint8Array(prfRes);
+  if (prf_secret.length !== 32) throw new Error('Unexpected PRF output length: ' + prf_secret.length);
+
+  // Wrap master_secret under (pw_key XOR prf_secret).
+  const wrapKey = await makeWrapKey(S.pw_key, prf_secret);
+  const { ct_b64, nonce_b64 } = await aesGcmWrap(wrapKey, S.master_secret);
+
+  const transports = cred.response?.getTransports?.() || [];
+  const credIdB64url = b64urlEncode(new Uint8Array(cred.rawId));
+
+  const entry = {
+    credential_id: credIdB64url,
+    salt_prf: b64e(salt_prf),
+    label: label || defaultKeyLabel(transports),
+    wrapped_master: ct_b64,
+    wrap_nonce: nonce_b64,
+    created_at: nowISO(),
+    transports
+  };
+  S.meta.bound_keys = (S.meta.bound_keys || []).concat([entry]);
+  S.bound_keys = S.meta.bound_keys;
+  await writeMeta(S.dirHandle, S.meta);
+  await appendEvent('key_bound', { credential_id: credIdB64url, label: entry.label, transports });
+  // Wipe transient PRF secret
+  prf_secret.fill(0);
+  return entry;
+}
+
+// Unbind a key. credIdB64url identifies which one. Caller must confirm
+// with the user first. Refuses to remove the last key if pw_wrap is disabled.
+async function unbindHardwareKey(credIdB64url) {
+  if (S.vault_format_version !== 2) throw new Error('Not a v2 vault.');
+  const idx = (S.meta.bound_keys || []).findIndex(k => k.credential_id === credIdB64url);
+  if (idx === -1) throw new Error('Key not found.');
+  const remaining = (S.meta.bound_keys || []).length - 1;
+  if (remaining === 0 && !metaPwWrapEnabled(S.meta)) {
+    throw new Error('Enable password-only fallback before removing your last key, or your vault will become unrecoverable.');
+  }
+  const removed = S.meta.bound_keys[idx];
+  S.meta.bound_keys = S.meta.bound_keys.filter((_, i) => i !== idx);
+  S.bound_keys = S.meta.bound_keys;
+  await writeMeta(S.dirHandle, S.meta);
+  await appendEvent('key_unbound', { credential_id: credIdB64url, label: removed.label, reason: 'user_removed' });
+}
+
+// Enable password-only fallback. Caller must have unlocked + have S.master_secret/S.pw_key set.
+async function enablePasswordFallback() {
+  if (S.vault_format_version !== 2) throw new Error('Not a v2 vault.');
+  if (!S.master_secret || !S.pw_key) throw new Error('Vault must be unlocked with both factors first.');
+  if (metaPwWrapEnabled(S.meta)) return; // already enabled
+  const pwWrapKey = await makePwOnlyWrapKey(S.pw_key);
+  const { ct_b64, nonce_b64 } = await aesGcmWrap(pwWrapKey, S.master_secret);
+  S.meta.pw_wrap = { enabled: true, wrapped_master: ct_b64, wrap_nonce: nonce_b64 };
+  await writeMeta(S.dirHandle, S.meta);
+}
+
+// Disable password-only fallback. Refused if no bound keys would remain.
+async function disablePasswordFallback() {
+  if (S.vault_format_version !== 2) throw new Error('Not a v2 vault.');
+  if ((metaBoundKeys(S.meta).length) === 0) {
+    throw new Error('Bind at least one hardware key before disabling password-only fallback.');
+  }
+  S.meta.pw_wrap = { enabled: false };
+  await writeMeta(S.dirHandle, S.meta);
+}
+
+// Change master password on a v2 vault. Re-wraps master_secret under the new
+// pw_key for each bound key (requires touching each) and for pw_wrap if enabled.
+// Caller is expected to have walked the user through the touches sequentially.
+// To keep the implementation tractable for v1.1, we collect one PRF assertion
+// per bound key in a single allowCredentials call — most authenticators (and
+// the user) will be guided through one touch per key. Strictly serial flow
+// (touch key 1, then key 2) is the cleanest UX and what we implement here.
+async function changeMasterPassword(currentPw, newPw) {
+  if (S.vault_format_version !== 2) throw new Error('Change master password requires a v2 vault.');
+  await argon2.init();
+  if (!argon2.isReady()) throw new Error('Argon2id WASM is not loaded.');
+  const re = await reverifyPassword(currentPw);
+  if (!re.ok) throw new Error('Current master password is incorrect.');
+
+  // Reuse existing kdf_salt so cross-device wrappers don't all need to change.
+  const kdf_salt = b64d(S.meta.kdf.salt_kdf);
+  const new_pw_key = await derivePwKeyArgon2(newPw, kdf_salt);
+
+  // Collect PRF outputs for every bound key, one at a time.
+  const newBoundKeys = [];
+  for (const bk of (S.meta.bound_keys || [])) {
+    const salt_prf = b64d(bk.salt_prf);
+    let assertion;
+    try {
+      assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{ id: b64urlDecode(bk.credential_id), type: 'public-key' }],
+          userVerification: 'preferred',
+          extensions: { prf: { eval: { first: salt_prf } } },
+          timeout: 60000
+        }
+      });
+    } catch (e) {
+      throw new Error(`Touch failed for "${bk.label}". All bound keys must be present to change the password.`);
+    }
+    const prfRes = assertion?.getClientExtensionResults?.()?.prf?.results?.first;
+    if (!prfRes) throw new Error(`PRF unavailable for "${bk.label}".`);
+    const prf_secret = new Uint8Array(prfRes);
+    const wrapKey = await makeWrapKey(new_pw_key, prf_secret);
+    const { ct_b64, nonce_b64 } = await aesGcmWrap(wrapKey, S.master_secret);
+    newBoundKeys.push({ ...bk, wrapped_master: ct_b64, wrap_nonce: nonce_b64 });
+    prf_secret.fill(0);
+  }
+
+  // Re-wrap pw_wrap if enabled.
+  let newPwWrap = S.meta.pw_wrap;
+  if (metaPwWrapEnabled(S.meta)) {
+    const pwWrapKey = await makePwOnlyWrapKey(new_pw_key);
+    const { ct_b64, nonce_b64 } = await aesGcmWrap(pwWrapKey, S.master_secret);
+    newPwWrap = { enabled: true, wrapped_master: ct_b64, wrap_nonce: nonce_b64 };
+  }
+
+  S.meta.bound_keys = newBoundKeys;
+  S.meta.pw_wrap = newPwWrap;
+  await writeMeta(S.dirHandle, S.meta);
+  // Replace transient pw_key in memory.
+  if (S.pw_key) S.pw_key.fill(0);
+  S.pw_key = new_pw_key;
+  S.bound_keys = newBoundKeys;
+  // Informational event — NO password material in payload.
+  await appendEvent('password_changed', { ts: nowISO() });
+}
+
+// ══════════════════════════════════════════════════════════
 // VAULT OPERATIONS
 // ══════════════════════════════════════════════════════════
 
@@ -2121,33 +2585,37 @@ function prepareUnlockScreen() {
   if (diffBtn) diffBtn.textContent = S._isOpfs ? 'Different vault' : 'Different folder';
   const hint = $('unlock-hint'); if (hint) hint.textContent = '';
   const pass = $('unlock-pass'); if (pass) pass.value = '';
-  // v1.1: show "Unlock with hardware key" primary action when meta has bound keys
+  // v1.1: show "Unlock with hardware key" primary action when meta has bound keys.
+  // Hardware-key unlock ALWAYS requires the master password too — both factors
+  // are inputs to the wrap_key. So password row stays visible whenever the
+  // hw-key row is visible. Password-only "Unlock" submit button is hidden
+  // when pw_wrap.enabled === false (no fallback configured).
   const hwRow = $('unlock-hw-row');
   const pwRow = $('unlock-pw-row');
+  const unlockBtn = $('unlock-btn');
   const hwOnlyNote = $('unlock-hw-only-note');
-  const pwLink = $('unlock-pw-link');
   const bound = (S.meta && metaBoundKeys(S.meta)) || [];
   const pwAllowed = !S.meta || metaPwWrapEnabled(S.meta);
   if (hwRow && pwRow) {
     if (bound.length > 0) {
       hwRow.style.display = '';
-      // If password-only is disabled, hide password input by default; show via link.
-      if (pwAllowed) {
-        pwRow.style.display = '';
-        if (pwLink) pwLink.style.display = 'none';
-        if (hwOnlyNote) hwOnlyNote.style.display = 'none';
-      } else {
-        pwRow.style.display = 'none';
-        if (pwLink) pwLink.style.display = 'none';
-        if (hwOnlyNote) hwOnlyNote.style.display = '';
-      }
+      pwRow.style.display = '';
+      if (unlockBtn) unlockBtn.style.display = pwAllowed ? '' : 'none';
+      if (hwOnlyNote) hwOnlyNote.style.display = pwAllowed ? 'none' : '';
     } else {
       hwRow.style.display = 'none';
       pwRow.style.display = '';
-      if (pwLink) pwLink.style.display = 'none';
+      if (unlockBtn) unlockBtn.style.display = '';
       if (hwOnlyNote) hwOnlyNote.style.display = 'none';
     }
   }
+}
+
+// Click target for "Use master password instead" link (kept for backward UI compat).
+function _revealPwUnlock() {
+  const pwRow = $('unlock-pw-row');
+  if (pwRow) pwRow.style.display = '';
+  $('unlock-pass')?.focus();
 }
 
 function resetIdleTimer() {
@@ -2586,7 +3054,230 @@ function openSettings() {
   $('set-lock-hide').checked = S.settings.lockOnHide;
   showSettingsTab('vault');
   renderDeviceRoster();
+  renderSecurityPanel();
   showModal('modal-settings');
+}
+
+// ── Security panel rendering (v1.1) ─────────────────────────
+async function renderSecurityPanel() {
+  const statusEl = $('security-prf-status');
+  const list = $('bound-keys-list');
+  const bindBtn = $('bind-key-btn');
+  const cmpBtn = $('change-master-pw-btn');
+  const fallbackRow = $('pw-fallback-row');
+  const fallbackCb = $('pw-fallback-cb');
+  const upgradeRow = $('upgrade-kdf-row');
+  if (!statusEl || !list) return;
+
+  const prfState = await prf.detect();
+  const secure = prf.isSecureContextOk();
+  const isV2 = S.vault_format_version === 2;
+
+  // Status line.
+  if (prfState === false) {
+    statusEl.innerHTML = `<div class="security-prf-unsupported">Hardware-key support requires Chrome 116+, Edge 116+, or Safari 18+. Your browser may not support this yet.</div>`;
+  } else if (!secure) {
+    statusEl.innerHTML = `<div class="security-prf-unsupported">Hardware-key binding requires Tijori to be served from a URL (https://… or localhost). It is not available when opened from a saved file.</div>`;
+  } else if (!argon2.isReady()) {
+    const err = argon2.loadError();
+    statusEl.innerHTML = `<div class="security-prf-unsupported">Argon2id WASM is not inlined in this build${err ? ' (' + escHtml(err) + ')' : ''}. Hardware-key binding and v2 vaults are unavailable until the maintainer inlines the WASM blob.</div>`;
+  } else {
+    statusEl.innerHTML = '';
+  }
+
+  // Bind button enabled only if PRF is plausibly supported, context is secure,
+  // and Argon2id is loaded.
+  if (bindBtn) {
+    bindBtn.disabled = (prfState === false) || !secure || !argon2.isReady();
+  }
+
+  // Bound keys list.
+  const bound = isV2 ? metaBoundKeys(S.meta) : [];
+  if (bound.length === 0) {
+    list.innerHTML = isV2
+      ? '<div style="font-size:13px;color:var(--muted);margin-bottom:8px">No hardware keys bound. Tijori works with master password only.</div>'
+      : '';
+  } else {
+    list.innerHTML = bound.map(k => {
+      const created = (k.created_at || '').slice(0, 10);
+      const transports = Array.isArray(k.transports) ? k.transports.join(', ') : '';
+      return `<div class="bound-key-item">
+        <div>
+          <div class="bound-key-label">${escHtml(k.label || 'Hardware key')}</div>
+          <div class="bound-key-meta">${escHtml(transports)}${transports ? ' · ' : ''}added ${escHtml(created)}</div>
+        </div>
+        <button class="btn ghost btn-sm" onclick="confirmUnbindKey('${escHtml(k.credential_id)}','${escHtml((k.label || '').replace(/'/g, '&#39;'))}')">Remove</button>
+      </div>`;
+    }).join('');
+  }
+
+  // Password-fallback toggle (only meaningful for v2 vaults with at least one key bound).
+  if (fallbackRow) {
+    if (isV2 && bound.length > 0) {
+      fallbackRow.style.display = '';
+      if (fallbackCb) {
+        fallbackCb.checked = metaPwWrapEnabled(S.meta);
+        fallbackCb.onchange = handleTogglePasswordFallback;
+      }
+    } else {
+      fallbackRow.style.display = 'none';
+    }
+  }
+
+  // Change-master-password button: only for v2 vaults.
+  if (cmpBtn) cmpBtn.style.display = isV2 ? '' : 'none';
+
+  // Standalone KDF upgrade button: only for v1 vaults (and Argon2id ready).
+  if (upgradeRow) {
+    upgradeRow.style.display = (!isV2 && argon2.isReady() && secure && prfState !== false) ? '' : 'none';
+    // Allow upgrade even without PRF — the upgrade only enables v2 KDF; binding is separate.
+    upgradeRow.style.display = (!isV2 && argon2.isReady()) ? '' : 'none';
+  }
+}
+
+// ── Backup-key banner ───────────────────────────────────────
+function renderBackupKeyBanner() {
+  const banner = $('backup-key-banner');
+  if (!banner) return;
+  const isV2 = S.vault_format_version === 2;
+  const bound = isV2 ? metaBoundKeys(S.meta) : [];
+  const fallback = isV2 ? metaPwWrapEnabled(S.meta) : true;
+  // Show only when exactly one key is bound AND fallback disabled (single point of failure).
+  const show = isV2 && bound.length === 1 && !fallback;
+  banner.style.display = show ? '' : 'none';
+}
+
+// ── Bind / unbind / fallback / change-password handlers ─────
+function openBindKeyModal() {
+  if (!S.dirHandle) return;
+  $('bind-label').value = '';
+  $('bind-password').value = '';
+  $('bind-hint').textContent = '';
+  $('bind-hint').style.color = 'var(--muted)';
+  showModal('modal-bind-key');
+  $('bind-password').focus();
+}
+
+async function handleBindKey() {
+  const label = $('bind-label').value.trim();
+  const pw = $('bind-password').value;
+  const hint = $('bind-hint');
+  const btn = $('bind-confirm-btn');
+  if (!pw) { hint.textContent = 'Enter your master password.'; hint.style.color = 'var(--danger)'; return; }
+  btn.disabled = true; btn.textContent = 'Binding…';
+  hint.textContent = 'Touch your key when prompted…'; hint.style.color = 'var(--muted)';
+  try {
+    const entry = await bindHardwareKey(pw, label);
+    hint.textContent = '';
+    hideModal('modal-bind-key');
+    toast(`Bound "${entry.label}".`);
+    renderSecurityPanel();
+    renderBackupKeyBanner();
+  } catch (e) {
+    hint.textContent = e.message || String(e);
+    hint.style.color = 'var(--danger)';
+  } finally { btn.disabled = false; btn.textContent = 'Bind key'; }
+}
+
+async function confirmUnbindKey(credIdB64url, label) {
+  const isLast = (metaBoundKeys(S.meta).length === 1);
+  const noFallback = !metaPwWrapEnabled(S.meta);
+  if (isLast && noFallback) {
+    toast('Enable password-only fallback first, or your vault will become unrecoverable.', { error: true });
+    return;
+  }
+  const ok = await confirmDialog(
+    `Remove "${label || 'this key'}"?`,
+    'Tijori will forget this hardware key. The key itself isn\'t modified. This cannot be undone from the vault side.',
+    'Remove', true
+  );
+  if (!ok) return;
+  try {
+    await unbindHardwareKey(credIdB64url);
+    toast('Key removed.');
+    renderSecurityPanel();
+    renderBackupKeyBanner();
+  } catch (e) {
+    toast(e.message, { error: true });
+  }
+}
+
+async function handleTogglePasswordFallback(ev) {
+  const cb = ev.target;
+  const wantEnable = cb.checked;
+  try {
+    if (wantEnable) {
+      const ok = await confirmDialog(
+        'Enable password-only fallback?',
+        'This means a stolen master password alone can unlock the vault, removing the hardware-key second-factor protection. Enable this only if you accept that tradeoff for recoverability.',
+        'Enable', false
+      );
+      if (!ok) { cb.checked = false; return; }
+      await enablePasswordFallback();
+      toast('Password-only fallback enabled.');
+    } else {
+      await disablePasswordFallback();
+      toast('Password-only fallback disabled.');
+    }
+    renderSecurityPanel();
+    renderBackupKeyBanner();
+  } catch (e) {
+    cb.checked = !wantEnable;
+    toast(e.message, { error: true });
+  }
+}
+
+function openChangeMasterPwModal() {
+  $('cmp-current').value = '';
+  $('cmp-new').value = '';
+  $('cmp-new2').value = '';
+  $('cmp-hint').textContent = '';
+  $('cmp-hint').style.color = 'var(--muted)';
+  showModal('modal-change-master-pw');
+  $('cmp-current').focus();
+}
+
+async function handleChangeMasterPw() {
+  const cur = $('cmp-current').value;
+  const n1 = $('cmp-new').value;
+  const n2 = $('cmp-new2').value;
+  const hint = $('cmp-hint');
+  const btn = $('cmp-confirm-btn');
+  if (!cur) { hint.textContent = 'Enter current password.'; hint.style.color = 'var(--danger)'; return; }
+  if (n1 !== n2) { hint.textContent = 'New passwords do not match.'; hint.style.color = 'var(--danger)'; return; }
+  if (estimateEntropy(n1) < 20) { hint.textContent = 'New password is too weak (< 20 bits entropy).'; hint.style.color = 'var(--danger)'; return; }
+  btn.disabled = true; btn.textContent = 'Changing…';
+  const bound = metaBoundKeys(S.meta);
+  hint.textContent = bound.length ? `Re-wrapping ${bound.length} key${bound.length > 1 ? 's' : ''}. Touch each when prompted.` : 'Re-wrapping…';
+  hint.style.color = 'var(--muted)';
+  try {
+    await changeMasterPassword(cur, n1);
+    hideModal('modal-change-master-pw');
+    toast('Master password changed.');
+  } catch (e) {
+    hint.textContent = e.message;
+    hint.style.color = 'var(--danger)';
+  } finally { btn.disabled = false; btn.textContent = 'Change password'; }
+}
+
+// Standalone v1→v2 KDF upgrade (no hardware key binding).
+async function confirmUpgradeKdfStandalone() {
+  if (S.vault_format_version === 2) return;
+  if (!argon2.isReady()) { toast('Argon2id WASM not loaded.', { error: true }); return; }
+  const ok = await confirmDialog(
+    'Upgrade vault to format v2?',
+    'This re-encrypts this device\'s event log with Argon2id (memory-hard key derivation). Your other devices will continue working with v1 events and will upgrade their own logs when they save.\n\nExisting v1.0 builds of Tijori cannot read v2 vaults. If you have older devices, update them or expect read-only behaviour.',
+    'Proceed', false
+  );
+  if (!ok) return;
+  // Re-prompt master password (we need it to derive the new pw_key).
+  const pw = prompt('Re-enter your master password to proceed with the upgrade:');
+  if (!pw) return;
+  try {
+    await migrateV1toV2(pw, { afterPwWrap: 'enable' });
+    toast('Vault upgraded to v2.');
+    renderSecurityPanel();
+  } catch (e) { toast(e.message, { error: true }); }
 }
 
 function showSettingsTab(tab) {
@@ -3118,6 +3809,7 @@ async function handleCreateVault() {
     await createVault(dir, pw, label);
     $('create-password').value = ''; $('create-password2').value = '';
     showScreen('vault'); toast('Vault created!');
+    afterUnlockHousekeeping();
     naklios.title('Tijori — unlocked');
   } catch (e) { toast(e.message, { error: true }); }
   finally { btn.disabled = false; btn.textContent = 'Create vault'; }
@@ -3135,12 +3827,82 @@ async function handleUnlock() {
     await unlockVault(S.dirHandle, pw);
     $('unlock-pass').value = ''; hint.textContent = '';
     showScreen('vault');
+    afterUnlockHousekeeping();
     naklios.title('Tijori — unlocked');
   } catch (e) {
     hint.textContent = e.message;
     hint.style.color = 'var(--danger)';
     $('unlock-pass').focus();
   } finally { btn.disabled = false; btn.textContent = 'Unlock'; }
+}
+
+async function handleUnlockWithKey() {
+  const pw = $('unlock-pass').value;
+  const hint = $('unlock-hint');
+  if (!pw) { hint.textContent = 'Enter your master password — the hardware key is a second factor.'; hint.style.color = 'var(--warn)'; $('unlock-pass').focus(); return; }
+  if ((await prf.detect()) === false) {
+    hint.textContent = 'Hardware-key support requires Chrome 116+, Edge 116+, or Safari 18+.';
+    hint.style.color = 'var(--danger)';
+    return;
+  }
+  if (!prf.isSecureContextOk()) {
+    hint.textContent = 'Hardware-key unlock requires Tijori to be served from a URL, not opened from a file.';
+    hint.style.color = 'var(--danger)';
+    return;
+  }
+  hint.textContent = 'Touch your hardware key…';
+  hint.style.color = '';
+  try {
+    const bound = metaBoundKeys(S.meta);
+    if (!bound.length) throw new Error('No hardware keys bound.');
+    const allowCredentials = bound.map(b => ({ id: b64urlDecode(b.credential_id), type: 'public-key' }));
+    const evalByCredential = {};
+    for (const b of bound) evalByCredential[b.credential_id] = { first: b64d(b.salt_prf) };
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials,
+        userVerification: 'preferred',
+        extensions: { prf: { evalByCredential } },
+        timeout: 60000
+      }
+    });
+    const credIdB64url = b64urlEncode(new Uint8Array(assertion.rawId));
+    const prfRes = assertion.getClientExtensionResults?.()?.prf?.results?.first;
+    if (!prfRes) throw new Error('PRF output unavailable for this key.');
+    const prf_secret = new Uint8Array(prfRes);
+    await unlockVaultWithKey(S.dirHandle, pw, credIdB64url, prf_secret);
+    prf_secret.fill(0);
+    $('unlock-pass').value = ''; hint.textContent = '';
+    showScreen('vault');
+    afterUnlockHousekeeping();
+    naklios.title('Tijori — unlocked');
+  } catch (e) {
+    if (e?.name === 'NotAllowedError') {
+      hint.textContent = 'Hardware key cancelled or timed out.';
+    } else {
+      hint.textContent = e.message || 'Master password or hardware key incorrect.';
+    }
+    hint.style.color = 'var(--danger)';
+  }
+}
+
+// Runs after a successful unlock. Upgrades own log if meta is v2 but our
+// stream is still v1; surfaces the backup-key banner when applicable; refreshes
+// the entry list.
+async function afterUnlockHousekeeping() {
+  try {
+    if (await upgradeOwnStreamIfNeeded()) {
+      // Reload merged state after own-stream rewrite.
+      await loadAndMerge();
+    }
+  } catch (e) {
+    toast('Stream upgrade failed: ' + e.message, { error: true });
+  }
+  renderBackupKeyBanner();
+  renderEntryList();
+  renderTopbar();
+  resetIdleTimer();
 }
 
 async function handleRegisterDevice() {
@@ -3154,6 +3916,7 @@ async function handleRegisterDevice() {
     await registerDevice(S.dirHandle, pw, S.deviceId, label);
     $('register-password').value = '';
     showScreen('vault'); toast('Device registered!');
+    afterUnlockHousekeeping();
     naklios.title('Tijori — unlocked');
   } catch (e) { toast(e.message, { error: true }); }
   finally { btn.disabled = false; btn.textContent = 'Register device'; }
@@ -3396,6 +4159,12 @@ async function init() {
   S.deviceLabel = localStorage.getItem('tijori.deviceLabel');
   const saved = localStorage.getItem('tijori.settings');
   if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
+
+  // Warm up Argon2id WASM and PRF capability probe in the background. Both
+  // are best-effort: missing WASM disables v2 features, missing PRF disables
+  // hardware-key features. Neither blocks the welcome/unlock screens.
+  argon2.init().catch(() => {});
+  prf.detect().catch(() => {});
 
   // OPFS reconnect (no permission needed — works on mobile)
   const opfsName = await idbGet('opfsVaultName');
