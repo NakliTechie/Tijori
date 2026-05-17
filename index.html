@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="author" content="Chirag Patnaik">
-<meta name="version" content="1.1.1">
+<meta name="version" content="1.1.2">
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'none';
   script-src 'unsafe-inline' 'wasm-unsafe-eval';
@@ -1022,6 +1022,31 @@ textarea { resize: vertical; min-height: 80px; }
     <div class="actions-bar">
       <button class="btn ghost btn-sm" onclick="hideModal('modal-bind-key')">Cancel</button>
       <button class="btn" id="bind-confirm-btn" onclick="handleBindKey()">Bind key</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: ASK FOR PASSWORD (v1.1) ══════════════
+  Generic password-prompt modal — replaces window.prompt() for flows that
+  need the master password mid-flow (e.g. the standalone KDF upgrade). Used
+  via the passwordPromptModal({title, sub, confirmLabel}) helper, which
+  returns a Promise that resolves to the entered password or null on cancel.
+-->
+<div id="modal-prompt-pw" class="modal-bg">
+  <div class="modal">
+    <h3 id="prompt-pw-title">Enter master password</h3>
+    <p id="prompt-pw-sub" style="font-size:13px;color:var(--muted);margin:0 0 14px"></p>
+    <div class="field">
+      <label for="prompt-pw-input">Master password</label>
+      <div class="pw-wrap">
+        <input type="password" id="prompt-pw-input" placeholder="master password" autocomplete="current-password">
+        <button class="pw-toggle" type="button" onclick="togglePw('prompt-pw-input', this)">👁</button>
+      </div>
+    </div>
+    <div class="hint" id="prompt-pw-hint" style="font-size:12px;color:var(--danger);min-height:16px;margin-bottom:10px"></div>
+    <div class="actions-bar">
+      <button class="btn ghost btn-sm" onclick="_cancelPasswordPromptModal()">Cancel</button>
+      <button class="btn" id="prompt-pw-confirm-btn" onclick="_confirmPasswordPromptModal()">Continue</button>
     </div>
   </div>
 </div>
@@ -3080,6 +3105,34 @@ function resolveConfirm(val) {
   if (_confirmResolve) { _confirmResolve(val); _confirmResolve = null; }
 }
 
+// ── Password-prompt modal (v1.1, replaces window.prompt) ────
+let _promptPwResolve = null;
+function passwordPromptModal({ title, sub, confirmLabel } = {}) {
+  $('prompt-pw-title').textContent = title || 'Enter master password';
+  $('prompt-pw-sub').textContent = sub || '';
+  $('prompt-pw-input').value = '';
+  $('prompt-pw-hint').textContent = '';
+  $('prompt-pw-confirm-btn').textContent = confirmLabel || 'Continue';
+  showModal('modal-prompt-pw');
+  setTimeout(() => $('prompt-pw-input').focus(), 50);
+  return new Promise(res => { _promptPwResolve = res; });
+}
+function _confirmPasswordPromptModal() {
+  const pw = $('prompt-pw-input').value;
+  if (!pw) {
+    $('prompt-pw-hint').textContent = 'Enter your master password.';
+    return;
+  }
+  hideModal('modal-prompt-pw');
+  $('prompt-pw-input').value = '';
+  if (_promptPwResolve) { _promptPwResolve(pw); _promptPwResolve = null; }
+}
+function _cancelPasswordPromptModal() {
+  hideModal('modal-prompt-pw');
+  $('prompt-pw-input').value = '';
+  if (_promptPwResolve) { _promptPwResolve(null); _promptPwResolve = null; }
+}
+
 // ══════════════════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════════════════
@@ -3309,7 +3362,11 @@ async function confirmUpgradeKdfStandalone() {
   );
   if (!ok) return;
   // Re-prompt master password (we need it to derive the new pw_key).
-  const pw = prompt('Re-enter your master password to proceed with the upgrade:');
+  const pw = await passwordPromptModal({
+    title: 'Re-enter master password',
+    sub: 'Tijori will derive a new Argon2id key from your password to re-encrypt this device\'s log.',
+    confirmLabel: 'Upgrade'
+  });
   if (!pw) return;
   try {
     await migrateV1toV2(pw, { afterPwWrap: 'enable' });
@@ -3616,16 +3673,26 @@ async function importArchive(text) {
     }
   }
 
-  // Merge meta devices
-  if (archive.meta?.devices && S.meta) {
-    const existingIds = new Set(S.meta.devices.map(d => d.id));
-    let changed = false;
-    for (const d of archive.meta.devices) {
-      if (typeof d.id === 'string' && typeof d.label === 'string' && !existingIds.has(d.id)) {
-        S.meta.devices.push(d); changed = true;
+  // Merge meta devices — route through metaDevices/metaSetDevices so that
+  // v2 vaults (meta.device_roster) and v1 vaults (meta.devices) are both
+  // handled correctly. Archive may be from a different format version than
+  // the local vault.
+  if (archive.meta && S.meta) {
+    const archiveDevs = metaDevices(archive.meta);
+    if (archiveDevs.length) {
+      const merged = metaDevices(S.meta).slice();
+      const existingIds = new Set(merged.map(d => d.id));
+      let changed = false;
+      for (const d of archiveDevs) {
+        if (typeof d.id === 'string' && typeof d.label === 'string' && !existingIds.has(d.id)) {
+          merged.push(d); changed = true;
+        }
+      }
+      if (changed) {
+        metaSetDevices(S.meta, merged);
+        await writeMeta(S.dirHandle, S.meta);
       }
     }
-    if (changed) await writeMeta(S.dirHandle, S.meta);
   }
 
   await loadAndMerge();
