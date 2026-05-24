@@ -568,6 +568,64 @@ td:last-child { color: var(--muted); }
     </p>
   </section>
 
+  <!-- ═══════ LIVING WITH YOUR VAULT FOLDER ═══════ -->
+  <section id="living-with-your-vault-folder">
+    <h2>Living with your vault folder</h2>
+    <p class="sub">What's safe to do with the folder day-to-day, and what isn't.</p>
+
+    <p>The folder is a <strong>bag of append-only files</strong>. <code>tijori-meta.json</code> is plaintext (KDF params, device roster — no secrets). Each device writes only to its own <code>tijori-events-&lt;deviceId&gt;.jsonl</code>. On unlock, Tijori reads every <code>.jsonl</code> it finds and merges deterministically by <code>(timestamp, device_id)</code>. The mental model: <strong>anything that adds or duplicates files is safe; anything that shrinks, truncates, edits in place, or replaces a file with an older copy is where you lose data</strong>.</p>
+
+    <h3 style="margin:20px 0 12px;font-size:15px;color:var(--ok)">&#x2705; Safe — the architecture is built for these</h3>
+
+    <div class="cards" style="margin-bottom:24px">
+      <div class="card">
+        <h3>Sync the folder across devices</h3>
+        <p>Dropbox, iCloud Drive, Google Drive, Syncthing, Git — all work. Each device writes only its own log file, so no file-level conflicts. Every device sees all logs and merges on unlock.</p>
+      </div>
+      <div class="card">
+        <h3>Copy the folder to a new device</h3>
+        <p>Open it on the new device → Tijori sees this device isn't in the roster and routes you through device registration. After that, the new device writes its own log alongside the old one. Both merge on unlock.</p>
+      </div>
+      <div class="card">
+        <h3>Move or rename the folder</h3>
+        <p>File-system operation, no data impact. The browser's folder permission may need to be re-granted — just use "Open vault" and pick the new location.</p>
+      </div>
+      <div class="card">
+        <h3>Back up the folder as a zip</h3>
+        <p>Restoring rewinds you to that point in time. Pair with the encrypted archive export (Settings &rarr; Data) for offsite backups.</p>
+      </div>
+    </div>
+
+    <h3 style="margin:0 0 12px;font-size:15px;color:var(--warn)">&#x26A0; Risky — these can lose data or confuse the device roster</h3>
+
+    <div class="cards" style="margin-bottom:24px">
+      <div class="card">
+        <h3>Restoring an old backup over a newer folder</h3>
+        <p>You lose every event after the snapshot. Sync tools usually win by keeping the newer file; manual restores don't. If you must restore, do it onto an empty location, not on top of a live folder.</p>
+      </div>
+      <div class="card">
+        <h3>Using the vault on two devices without sync</h3>
+        <p>Each device builds its own log in its own folder; they diverge. Manually copying one folder over the other will lose half the work. Pick a sync transport (cloud folder, Syncthing, Git, or QR flash) and stick to one.</p>
+      </div>
+      <div class="card">
+        <h3>Editing a <code>.jsonl</code> file by hand</h3>
+        <p>Each event line embeds <code>prev_hash = sha256(prev_line)</code>. Any byte-level edit breaks the chain. Tijori excludes the entire device's events on next unlock with a "Chain integrity failure" toast. Restore the file to recover.</p>
+      </div>
+      <div class="card">
+        <h3>Clearing browser data / different browser</h3>
+        <p>Device ID lives in <code>localStorage</code>, not the folder. Cleared localStorage &rarr; next open registers as a <em>new</em> device with a new log file. The old log still merges fine, you just get an orphan in the device roster. Revoke it from Settings &rarr; Vault.</p>
+      </div>
+      <div class="card">
+        <h3>Hand-copying log files between folders</h3>
+        <p>Works — the merge ingests every <code>tijori-events-*.jsonl</code> it finds, regardless of roster membership. But the device roster in <code>tijori-meta.json</code> won't know about the foreign device until a registration event for it gets included.</p>
+      </div>
+    </div>
+
+    <div class="warn" style="margin-top:8px">
+      <strong>One sync mechanism at a time.</strong> If you set up cloud sync, don't <em>also</em> hand-carry the folder via USB or copy it around manually. Pick one transport and trust it. Mixing transports is the most common way users get into trouble.
+    </div>
+  </section>
+
   <div class="footer">
     <p>
       Tijori is part of the <a href="https://naklitechie.github.io/" target="_blank" rel="noopener">NakliTechie</a> series —

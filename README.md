@@ -150,6 +150,31 @@ Supported where `BarcodeDetector` is available (Chrome, Safari 17+).
 | Git | Each device's log is a separate file — `git merge` never produces conflicts on event logs. |
 | USB / manual | Export encrypted archive, import on other device. Same `.tijori` file, same dedup-on-import semantics as QR. |
 
+## Vault folder — what's safe to do
+
+The vault folder is a **bag of append-only files**. `tijori-meta.json` is plaintext (KDF params, device roster — no secrets). Each device writes only to its own `tijori-events-<deviceId>.jsonl`. On unlock, Tijori reads every `.jsonl` it finds and merges deterministically.
+
+**Mental model:** anything that **adds or duplicates** files is safe. Anything that **shrinks, truncates, edits in place, or replaces a file with an older copy** loses data.
+
+### Safe
+
+- **Sync the folder across devices** via Dropbox, iCloud Drive, Google Drive, Syncthing, or Git. Each device only writes its own log file → no file-level conflicts.
+- **Copy the folder to a new device.** On first open, Tijori sees this device isn't in the roster and routes you through device registration. The old device's log keeps merging.
+- **Move or rename the folder.** Just re-grant browser permission via "Open vault" → pick the new location.
+- **Zip the folder as a backup.** Restoring rewinds you to that point in time.
+
+### Risky
+
+- **Restoring an old backup over a newer folder** — you lose every event after the snapshot. Restore onto an empty location instead.
+- **Using the vault on two devices without sync** — they diverge. Manually copying one over the other loses half the work. Pick one sync transport.
+- **Editing a `.jsonl` file by hand** — breaks the SHA-256 hash chain. Tijori excludes that device's events on next unlock with a "Chain integrity failure" toast. Restore the file to recover.
+- **Clearing browser data / using a different browser** — the device ID lives in `localStorage`, not the folder. Cleared localStorage → next open registers as a new device. The old log still merges fine, you just get an orphan in the roster (revoke it from Settings → Vault).
+- **Hand-copying log files between folders** — works (the merge ingests every `tijori-events-*.jsonl` regardless of roster), but the device roster will lag until a registration event for that device gets merged in.
+
+**One sync mechanism at a time.** Mixing transports (cloud sync *and* USB *and* manual copies) is the most common way users lose data. Pick one and trust it.
+
+See the [in-app guide](https://tijori.naklitechie.com/guide/#living-with-your-vault-folder) for the same content with cards/diagrams.
+
 ## Tijori and Rotor
 
 Tijori and [Rotor](https://rotor.naklitechie.com) share the same engine — same event-log format, same crypto, same five sync transports. They differ only in scope: Tijori holds logins, cards, notes, and TOTP codes under one master password; Rotor holds only TOTP codes, ever.
