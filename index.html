@@ -651,6 +651,7 @@ textarea { resize: vertical; min-height: 80px; }
     <p class="auth-sub" style="text-align:center">
       <span id="unlock-folder-tag" class="folder-tag"></span>
     </p>
+    <p id="unlock-grace-note" style="text-align:center;font-size:11px;color:var(--muted);margin:-4px 0 12px;min-height:14px"></p>
     <form onsubmit="handleUnlock();return false;">
       <div class="field" id="unlock-pw-row">
         <label for="unlock-pass">Master password</label>
@@ -942,6 +943,11 @@ textarea { resize: vertical; min-height: 80px; }
       <div class="field" style="display:flex;align-items:center;gap:10px">
         <input type="checkbox" id="set-lock-hide" style="width:auto;margin:0" checked>
         <label for="set-lock-hide" style="margin:0;cursor:pointer">Lock when tab is hidden</label>
+      </div>
+      <div class="field">
+        <label for="set-lock-hide-grace">Hide grace period (seconds)</label>
+        <input type="number" id="set-lock-hide-grace" min="0" max="300" value="30">
+        <div class="hint">Wait this long after tab is hidden before locking. 0 = lock immediately. Cancelled if you return to the tab in time.</div>
       </div>
       <div style="margin-top:16px">
         <button class="btn" onclick="saveSettings();toast('Settings saved.')">Save settings</button>
@@ -1680,11 +1686,12 @@ const S = {
   filterType: 'all',
   searchQuery: '',
   idleTimer: null,
+  hideTimer: null,
   clipTimers: {},
   _pendingHandle: null,
   _isOpfs: false,
   _opfsVaultName: null,
-  settings: { idleTimeout: 300, clipClear: 30, lockOnHide: true },
+  settings: { idleTimeout: 300, clipClear: 30, lockOnHide: true, lockOnHideGrace: 30 },
   // v1.1 v2-vault state (null/empty for v1 vaults):
   vault_format_version: 1,
   legacy_key: null,       // CryptoKey — set for v2 vaults to decrypt v1 events from un-upgraded device streams
@@ -2791,6 +2798,8 @@ function lock() {
   Object.values(S.clipTimers).forEach(t => clearTimeout(t));
   S.clipTimers = {};
   clearTimeout(S.idleTimer);
+  clearTimeout(S.hideTimer);
+  S.hideTimer = null;
   prepareUnlockScreen();
   hideAllModals();
   showScreen('unlock');
@@ -2800,6 +2809,17 @@ function lock() {
 function prepareUnlockScreen() {
   const folder = S._isOpfs ? (S._opfsVaultName ?? '') : (S.dirHandle?.name ?? '');
   const tag = $('unlock-folder-tag'); if (tag) tag.textContent = folder;
+  const graceNote = $('unlock-grace-note');
+  if (graceNote) {
+    if (S.settings.lockOnHide) {
+      const g = S.settings.lockOnHideGrace ?? 0;
+      graceNote.textContent = g === 0
+        ? 'Auto-lock on tab hide: immediate'
+        : `Auto-lock on tab hide: ${g}s grace`;
+    } else {
+      graceNote.textContent = 'Auto-lock on tab hide: off';
+    }
+  }
   const diffBtn = $('unlock-diff-btn');
   if (diffBtn) diffBtn.textContent = S._isOpfs ? 'Different vault' : 'Different folder';
   const hint = $('unlock-hint'); if (hint) hint.textContent = '';
@@ -2847,7 +2867,16 @@ function resetIdleTimer() {
   document.addEventListener(ev, resetIdleTimer, { passive: true })
 );
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && S.settings.lockOnHide && S.key) lock();
+  if (document.hidden) {
+    if (!S.settings.lockOnHide || !S.key) return;
+    const grace = Math.max(0, S.settings.lockOnHideGrace ?? 0);
+    clearTimeout(S.hideTimer);
+    if (grace === 0) { lock(); return; }
+    S.hideTimer = setTimeout(() => { if (document.hidden && S.key) lock(); }, grace * 1000);
+  } else {
+    clearTimeout(S.hideTimer);
+    S.hideTimer = null;
+  }
 });
 
 // ══════════════════════════════════════════════════════════
@@ -3299,6 +3328,7 @@ function openSettings() {
   $('set-idle').value = S.settings.idleTimeout;
   $('set-clip').value = S.settings.clipClear;
   $('set-lock-hide').checked = S.settings.lockOnHide;
+  $('set-lock-hide-grace').value = S.settings.lockOnHideGrace ?? 30;
   showSettingsTab('vault');
   renderDeviceRoster();
   renderSecurityPanel();
@@ -3540,6 +3570,7 @@ function saveSettings() {
   S.settings.idleTimeout = Math.max(30, parseInt($('set-idle').value) || 300);
   S.settings.clipClear = Math.max(5, parseInt($('set-clip').value) || 30);
   S.settings.lockOnHide = $('set-lock-hide').checked;
+  S.settings.lockOnHideGrace = Math.min(300, Math.max(0, parseInt($('set-lock-hide-grace').value) || 0));
   localStorage.setItem('tijori.settings', JSON.stringify(S.settings));
   resetIdleTimer();
 }
