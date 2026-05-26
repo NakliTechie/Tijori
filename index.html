@@ -2830,6 +2830,14 @@ function lock() {
   clearTimeout(S.idleTimer);
   clearTimeout(S.hideTimer);
   S.hideTimer = null;
+  // Wipe any sensitive values still sitting in DOM inputs (mid-edit TOTP
+  // secret, recovery codes, login password, card CVV/number, change-master-pw
+  // fields, etc.) — otherwise they remain readable via devtools after the
+  // screen swaps to the locked state.
+  try { clearEntryForm(); } catch {}
+  document.querySelectorAll('input[type="password"], textarea').forEach(el => { el.value = ''; });
+  // card-number is type=text but still sensitive
+  const cardNum = $('card-number'); if (cardNum) cardNum.value = '';
   prepareUnlockScreen();
   hideAllModals();
   showScreen('unlock');
