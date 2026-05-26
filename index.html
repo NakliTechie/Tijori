@@ -875,6 +875,10 @@ textarea { resize: vertical; min-height: 80px; }
         <label>Recovery codes <span style="color:var(--muted);font-weight:400">(optional — paste the backup codes the service gave you)</span></label>
         <textarea id="code-recovery" rows="4" placeholder="one per line" autocomplete="off"></textarea>
       </div>
+      <div class="field">
+        <label>Notes <span style="color:var(--muted);font-weight:400">(optional — anything else worth remembering)</span></label>
+        <textarea id="code-notes" rows="3" placeholder="e.g. this is the work account, set up Apr 2026" autocomplete="off"></textarea>
+      </div>
     </div>
 
     <hr class="sep">
@@ -3243,6 +3247,7 @@ function openEntryModal(id) {
       const dig = $('code-digits'); if (dig) dig.value = fv(entry, 'digits') || '6';
       const per = $('code-period'); if (per) per.value = fv(entry, 'period') || '30';
       const rec = $('code-recovery'); if (rec) rec.value = fv(entry, 'recovery_codes') || '';
+      const nts = $('code-notes'); if (nts) nts.value = fv(entry, 'notes') || '';
     }
   }
 
@@ -3254,7 +3259,7 @@ function clearEntryForm() {
   ['login-title','login-url','login-username','login-password','login-notes',
    'card-label','card-cardholder','card-number','card-expiry','card-cvv','card-notes',
    'note-title','note-body',
-   'code-uri','code-label','code-secret','code-account','code-issuer','code-recovery'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+   'code-uri','code-label','code-secret','code-account','code-issuer','code-recovery','code-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; });
   const algo = $('code-algo'); if (algo) algo.value = 'SHA-1';
   const dig = $('code-digits'); if (dig) dig.value = '6';
   const per = $('code-period'); if (per) per.value = '30';
@@ -3314,7 +3319,8 @@ async function saveEntry() {
       algorithm: { v: $('code-algo').value, ts },
       digits: { v: $('code-digits').value, ts },
       period: { v: $('code-period').value, ts },
-      recovery_codes: { v: $('code-recovery').value.trim(), ts }
+      recovery_codes: { v: $('code-recovery').value.trim(), ts },
+      notes: { v: $('code-notes').value.trim(), ts }
     };
   }
 
