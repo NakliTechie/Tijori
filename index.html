@@ -468,11 +468,13 @@ textarea { resize: vertical; min-height: 80px; }
 .code-tile-meta { flex: 1; min-width: 0; }
 .code-label-text { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-issuer-text { font-size: 11px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.code-pin-btn {
+.code-pin-btn, .code-edit-btn {
   background: none; border: none; font-size: 13px;
-  color: var(--muted); padding: 0 0 0 6px; line-height: 1; flex-shrink: 0;
+  color: var(--muted); padding: 0 0 0 6px; line-height: 1; flex-shrink: 0; cursor: pointer;
 }
 .code-pin-btn:hover, .code-tile.pinned .code-pin-btn { color: var(--warn); }
+.code-edit-btn:hover { color: var(--accent); }
+.code-tile-actions { display: flex; align-items: flex-start; gap: 0; }
 .code-main { display: flex; align-items: center; gap: 10px; }
 .code-value {
   font-family: var(--mono); font-size: 22px; font-weight: 700;
@@ -868,6 +870,10 @@ textarea { resize: vertical; min-height: 80px; }
           <label>Period</label>
           <select id="code-period"><option value="30">30s</option><option value="60">60s</option></select>
         </div>
+      </div>
+      <div class="field">
+        <label>Recovery codes <span style="color:var(--muted);font-weight:400">(optional — paste the backup codes the service gave you)</span></label>
+        <textarea id="code-recovery" rows="4" placeholder="one per line" autocomplete="off"></textarea>
       </div>
     </div>
 
@@ -1525,10 +1531,11 @@ function base32Decode(s) {
   return new Uint8Array(out);
 }
 
-async function totpNow(secret, { digits = 6, period = 30, algorithm = 'SHA-1', offset = 0 } = {}) {
+async function totpNow(secret, { digits = 6, period = 30, algorithm = 'SHA-1', offset = 0, at = null } = {}) {
   const keyBytes = base32Decode(secret);
   if (!keyBytes.length) throw new Error('Invalid TOTP secret.');
-  const T = Math.floor(Date.now() / 1000 / period) + offset;
+  const now = at !== null ? at : Date.now() / 1000;
+  const T = Math.floor(now / period) + offset;
   const msg = new Uint8Array(8);
   let t = T;
   for (let i = 7; i >= 0; i--) { msg[i] = t & 0xff; t = Math.floor(t / 256); }
@@ -3191,6 +3198,7 @@ function openEntryModal(id) {
       const algo = $('code-algo'); if (algo) algo.value = fv(entry, 'algorithm') || 'SHA-1';
       const dig = $('code-digits'); if (dig) dig.value = fv(entry, 'digits') || '6';
       const per = $('code-period'); if (per) per.value = fv(entry, 'period') || '30';
+      const rec = $('code-recovery'); if (rec) rec.value = fv(entry, 'recovery_codes') || '';
     }
   }
 
@@ -3202,7 +3210,7 @@ function clearEntryForm() {
   ['login-title','login-url','login-username','login-password','login-notes',
    'card-label','card-cardholder','card-number','card-expiry','card-cvv','card-notes',
    'note-title','note-body',
-   'code-uri','code-label','code-secret','code-account','code-issuer'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+   'code-uri','code-label','code-secret','code-account','code-issuer','code-recovery'].forEach(id => { const el = $(id); if (el) el.value = ''; });
   const algo = $('code-algo'); if (algo) algo.value = 'SHA-1';
   const dig = $('code-digits'); if (dig) dig.value = '6';
   const per = $('code-period'); if (per) per.value = '30';
@@ -3261,7 +3269,8 @@ async function saveEntry() {
       issuer: { v: $('code-issuer').value.trim(), ts },
       algorithm: { v: $('code-algo').value, ts },
       digits: { v: $('code-digits').value, ts },
-      period: { v: $('code-period').value, ts }
+      period: { v: $('code-period').value, ts },
+      recovery_codes: { v: $('code-recovery').value.trim(), ts }
     };
   }
 
@@ -4989,8 +4998,12 @@ async function renderCodesGrid() {
           <div class="code-label-text">${label}</div>
           ${issuer ? `<div class="code-issuer-text">${escHtml(issuer)}</div>` : ''}
         </div>
-        <button class="code-pin-btn" title="${pinned ? 'Unpin' : 'Pin'}"
-          onclick="event.stopPropagation();togglePin('${e.id}')">★</button>
+        <div class="code-tile-actions">
+          <button class="code-edit-btn" title="View / edit"
+            onclick="event.stopPropagation();openEntryModal('${e.id}')">✎</button>
+          <button class="code-pin-btn" title="${pinned ? 'Unpin' : 'Pin'}"
+            onclick="event.stopPropagation();togglePin('${e.id}')">★</button>
+        </div>
       </div>
       <div class="code-main">
         <div class="code-value${expiring ? ' expiring' : ''}" id="cv-${e.id}">${current}</div>
@@ -5139,7 +5152,30 @@ document.querySelectorAll('.modal-bg').forEach(bg =>
 // INIT
 // ══════════════════════════════════════════════════════════
 
+// RFC 6238 Appendix B self-test — runs once on boot.
+async function _rfc6238SelfTest() {
+  const k1 = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'; // 20 bytes: "12345678901234567890"
+  const k2 = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA'; // 32 bytes, SHA-256
+  const k3 = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA'; // 64 bytes, SHA-512
+  const cases = [
+    { k: k1, algo: 'SHA-1',   at: 59,         want: '94287082' },
+    { k: k2, algo: 'SHA-256', at: 59,         want: '46119246' },
+    { k: k3, algo: 'SHA-512', at: 59,         want: '90693936' },
+    { k: k1, algo: 'SHA-1',   at: 1111111109, want: '07081804' }
+  ];
+  let pass = 0;
+  for (const c of cases) {
+    try {
+      const code = await totpNow(c.k, { digits: 8, period: 30, algorithm: c.algo, at: c.at });
+      if (code === c.want) { pass++; console.log(`Tijori TOTP self-test ${c.algo}@${c.at}: PASS (${code})`); }
+      else console.log(`Tijori TOTP self-test ${c.algo}@${c.at}: FAIL (got ${code}, want ${c.want})`);
+    } catch (e) { console.log(`Tijori TOTP self-test ${c.algo}@${c.at}: FAIL (${e.message})`); }
+  }
+  console.log(`Tijori TOTP self-test: ${pass}/${cases.length} passed`);
+}
+
 async function init() {
+  _rfc6238SelfTest();
   S.deviceId = localStorage.getItem('tijori.deviceId');
   S.deviceLabel = localStorage.getItem('tijori.deviceLabel');
   const saved = localStorage.getItem('tijori.settings');
