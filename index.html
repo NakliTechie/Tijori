@@ -741,7 +741,7 @@ textarea { resize: vertical; min-height: 80px; }
       <button class="filter-tab" data-type="login" onclick="setFilter('login')">Logins</button>
       <button class="filter-tab" data-type="card" onclick="setFilter('card')">Cards</button>
       <button class="filter-tab" data-type="note" onclick="setFilter('note')">Notes</button>
-      <button class="filter-tab" data-type="code" onclick="setFilter('code')">Codes</button>
+      <button class="filter-tab" data-type="code" onclick="setFilter('code')">TOTPs</button>
     </div>
     <button class="btn btn-sm" onclick="openEntryModal(null)">＋ Add</button>
   </div>
@@ -755,9 +755,9 @@ textarea { resize: vertical; min-height: 80px; }
   <div id="codes-view" style="display:none">
     <div class="codes-grid" id="codes-grid"></div>
     <div class="vault-empty" id="codes-empty" style="display:none">
-      <h3>No codes yet</h3>
-      <p>Add TOTP codes from any authenticator app.</p>
-      <button class="btn" onclick="openEntryModal(null);switchEntryTab('code')">＋ Add code</button>
+      <h3>No TOTPs yet</h3>
+      <p>Add TOTPs from any authenticator app.</p>
+      <button class="btn" onclick="openEntryModal(null);switchEntryTab('code')">＋ Add TOTP</button>
     </div>
   </div>
 
@@ -772,7 +772,7 @@ textarea { resize: vertical; min-height: 80px; }
       <button class="entry-tab-btn active" data-type="login" onclick="switchEntryTab('login')">🔑 Login</button>
       <button class="entry-tab-btn" data-type="card" onclick="switchEntryTab('card')">💳 Card</button>
       <button class="entry-tab-btn" data-type="note" onclick="switchEntryTab('note')">📝 Note</button>
-      <button class="entry-tab-btn" data-type="code" onclick="switchEntryTab('code')">🔐 Code</button>
+      <button class="entry-tab-btn" data-type="code" onclick="switchEntryTab('code')">🔐 TOTP</button>
     </div>
 
     <!-- Login pane -->
@@ -819,11 +819,24 @@ textarea { resize: vertical; min-height: 80px; }
       <div class="field"><label>Body</label><textarea id="note-body" rows="6"></textarea></div>
     </div>
 
-    <!-- Code (TOTP) pane -->
+    <!-- TOTP pane -->
     <div id="entry-pane-code" class="tab-pane entry-form-pane" data-type="code">
       <div class="field">
         <label>otpauth:// URI <span style="color:var(--muted);font-weight:400">(optional — auto-fills fields)</span></label>
-        <input id="code-uri" placeholder="otpauth://totp/..." autocomplete="off" oninput="parseOtpUri(this.value)">
+        <div style="display:flex;gap:8px;align-items:stretch">
+          <input id="code-uri" placeholder="otpauth://totp/..." autocomplete="off" oninput="parseOtpUri(this.value)" style="flex:1;min-width:0">
+          <button class="btn ghost btn-sm" type="button" onclick="toggleEntryQrScan()" title="Scan QR with camera" style="padding:0 12px;flex-shrink:0">📷</button>
+          <button class="btn ghost btn-sm" type="button" onclick="document.getElementById('entry-qr-image').click()" title="Upload QR image" style="padding:0 12px;flex-shrink:0">🖼</button>
+          <input type="file" id="entry-qr-image" accept="image/*" style="display:none" onchange="handleEntryQrImage(this.files[0]);this.value=''">
+        </div>
+        <div id="entry-qr-area" style="display:none;margin-top:10px">
+          <div class="camera-wrap" style="max-width:240px">
+            <video id="entry-qr-video" autoplay playsinline muted></video>
+            <div class="camera-corner tl"></div><div class="camera-corner tr"></div>
+            <div class="camera-corner bl"></div><div class="camera-corner br"></div>
+          </div>
+          <div class="qr-recv-status" id="entry-qr-status">Starting camera…</div>
+        </div>
       </div>
       <div class="field"><label>Label*</label><input id="code-label" placeholder="e.g. GitHub" autocomplete="off"></div>
       <div class="field">
@@ -3003,6 +3016,7 @@ function hideModal(id) {
 }
 function hideAllModals() {
   document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('active'));
+  stopEntryQrScan?.();
 }
 
 function toast(msg, { error = false, dur = 2500 } = {}) {
@@ -3173,6 +3187,7 @@ function openEntryModal(id) {
 }
 
 function clearEntryForm() {
+  stopEntryQrScan?.();
   ['login-title','login-url','login-username','login-password','login-notes',
    'card-label','card-cardholder','card-number','card-expiry','card-cvv','card-notes',
    'note-title','note-body',
@@ -4237,10 +4252,10 @@ function runVaultAudit() {
     { id: 'reused',  title: 'Passwords reused across logins',  items: reused,  severity: reused.length ? 'bad' : 'ok' },
     { id: 'weak',    title: 'Weak passwords (entropy < 40 bits)', items: weak,  severity: weak.length ? 'warn' : 'ok' },
     { id: 'short',   title: 'Short passwords (< 8 chars)',     items: shortPw, severity: shortPw.length ? 'warn' : 'ok' },
-    { id: 'no2fa',   title: 'Logins with no matching 2FA code', items: no2fa,  severity: 'ok' },
+    { id: 'no2fa',   title: 'Logins with no matching TOTP', items: no2fa,  severity: 'ok' },
     { id: 'aging',   title: 'Entries not touched in over 2 years', items: aging, severity: 'ok' },
     { id: 'nourl',   title: 'Logins without a URL',             items: noUrl,  severity: 'ok' },
-    { id: 'orphans', title: 'TOTP codes with no matching login', items: orphans, severity: 'ok' },
+    { id: 'orphans', title: 'TOTPs with no matching login', items: orphans, severity: 'ok' },
     { id: 'empty',   title: 'Empty / unlabelled entries',       items: empty,  severity: empty.length ? 'warn' : 'ok' },
   ];
 }
@@ -5009,7 +5024,7 @@ function parseOtpUri(uri) {
 function previewOtpauthPaste(text) {
   const lines = text.split('\n').map(s => s.trim()).filter(s => s.startsWith('otpauth://'));
   const count = lines.map(l => parseOtpauthUri(l)).filter(Boolean).length;
-  $('import-preview-count').textContent = count + ' code' + (count !== 1 ? 's' : '') + ' found';
+  $('import-preview-count').textContent = count + ' TOTP' + (count !== 1 ? 's' : '') + ' found';
   $('import-preview').style.display = count ? '' : 'none';
   _importParsed = count ? lines.map(l => parseOtpauthUri(l)).filter(Boolean).map(p => ({
     type: 'code',
@@ -5280,6 +5295,75 @@ async function _finishQrReceive(total) {
 function stopQrReceive() {
   clearInterval(_qrScanTimer); _qrScanTimer = null;
   if (_qrStream) { _qrStream.getTracks().forEach(t => t.stop()); _qrStream = null; }
+}
+
+// ── Single-QR scan for the Add TOTP modal (otpauth:// from a service QR) ──
+let _entryQrStream = null, _entryQrTimer = null;
+
+async function toggleEntryQrScan() {
+  if (_entryQrStream || _entryQrTimer) { stopEntryQrScan(); return; }
+  const area = $('entry-qr-area'), statusEl = $('entry-qr-status');
+  if (!area || !statusEl) return;
+  area.style.display = '';
+  if (typeof BarcodeDetector === 'undefined') {
+    statusEl.textContent = '⚠ Camera scanning requires Chrome or Safari 17+.';
+    return;
+  }
+  statusEl.textContent = 'Requesting camera…';
+  try {
+    _entryQrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    const video = $('entry-qr-video');
+    video.srcObject = _entryQrStream;
+    await video.play();
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    statusEl.textContent = 'Point at an otpauth QR…';
+    _entryQrTimer = setInterval(async () => {
+      if (!video.readyState || video.readyState < 2) return;
+      try {
+        const codes = await detector.detect(video);
+        for (const c of codes) if (_processEntryQrValue(c.rawValue)) return;
+      } catch {}
+    }, 150);
+  } catch (e) {
+    statusEl.textContent = 'Camera access denied.';
+    _entryQrStream = null;
+  }
+}
+
+function stopEntryQrScan() {
+  if (_entryQrTimer) { clearInterval(_entryQrTimer); _entryQrTimer = null; }
+  if (_entryQrStream) { _entryQrStream.getTracks().forEach(t => t.stop()); _entryQrStream = null; }
+  const area = $('entry-qr-area'); if (area) area.style.display = 'none';
+  const video = $('entry-qr-video'); if (video) video.srcObject = null;
+}
+
+function _processEntryQrValue(raw) {
+  if (!raw || !raw.startsWith('otpauth://')) return false;
+  const p = parseOtpauthUri(raw);
+  if (!p || !p.secret) return false;
+  const uriEl = $('code-uri');
+  if (uriEl) uriEl.value = raw;
+  parseOtpUri(raw);
+  stopEntryQrScan();
+  toast('QR captured.');
+  return true;
+}
+
+async function handleEntryQrImage(file) {
+  if (!file) return;
+  if (typeof BarcodeDetector === 'undefined') {
+    toast('Image scan requires Chrome or Safari 17+.', { error: true });
+    return;
+  }
+  try {
+    const bitmap = await createImageBitmap(file);
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    const codes = await detector.detect(bitmap);
+    for (const c of codes) if (_processEntryQrValue(c.rawValue)) return;
+    toast('No otpauth QR found in image.', { error: true });
+  } catch (e) {
+    toast('Could not read image: ' + e.message, { error: true });
+  }
 }
 
 init().finally(() => naklios.ready());
