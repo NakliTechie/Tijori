@@ -17,3 +17,7 @@
 
 # macOS finder metadata — re-excluded after guide/** whitelist
 **/.DS_Store
+
+# local-only working notes (already covered by the wildcard above, listed
+# explicitly so the intent survives future edits)
+plan/
