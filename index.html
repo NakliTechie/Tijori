@@ -610,37 +610,39 @@ textarea { resize: vertical; min-height: 80px; }
     <button class="back-link" onclick="showScreen('welcome')">← Back</button>
     <h2>Create vault <span id="create-folder-tag" class="folder-tag"></span></h2>
     <p class="auth-sub" id="create-sub">Choose a master password and a name for this device. There is no recovery — back up regularly.</p>
-    <div class="field" id="create-vault-name-wrap" style="display:none">
-      <label for="create-vault-name">Vault name</label>
-      <input type="text" id="create-vault-name" placeholder="My Vault" maxlength="64" autocomplete="off">
-    </div>
-    <div class="warn-box">
-      <strong>No recovery.</strong> Forget the master password and your vault is gone. This is the cost of zero-knowledge.
-    </div>
-    <div class="field">
-      <label for="create-device-label">Device name</label>
-      <input type="text" id="create-device-label" placeholder="e.g. Chirag's MacBook" autocomplete="off" maxlength="64">
-    </div>
-    <div class="field">
-      <label for="create-password">Master password</label>
-      <div class="pw-wrap">
-        <input type="password" id="create-password" placeholder="at least 20 bits entropy" autocomplete="new-password"
-          oninput="updateEntropyMeter(this.value)">
-        <button class="pw-toggle" type="button" onclick="togglePw('create-password', this)">👁</button>
+    <form onsubmit="handleCreateVault();return false;">
+      <div class="field" id="create-vault-name-wrap" style="display:none">
+        <label for="create-vault-name">Vault name</label>
+        <input type="text" id="create-vault-name" placeholder="My Vault" maxlength="64" autocomplete="off">
       </div>
-      <div class="entropy-bar-wrap"><div class="entropy-bar" id="entropy-bar"></div></div>
-      <div class="entropy-label" id="entropy-label"></div>
-    </div>
-    <div class="field">
-      <label for="create-password2">Confirm password</label>
-      <div class="pw-wrap">
-        <input type="password" id="create-password2" placeholder="type it again" autocomplete="new-password">
-        <button class="pw-toggle" type="button" onclick="togglePw('create-password2', this)">👁</button>
+      <div class="warn-box">
+        <strong>No recovery.</strong> Forget the master password and your vault is gone. This is the cost of zero-knowledge.
       </div>
-    </div>
-    <div class="actions-bar">
-      <button class="btn" id="create-btn" onclick="handleCreateVault()">Create vault</button>
-    </div>
+      <div class="field">
+        <label for="create-device-label">Device name</label>
+        <input type="text" id="create-device-label" placeholder="e.g. Chirag's MacBook" autocomplete="off" maxlength="64">
+      </div>
+      <div class="field">
+        <label for="create-password">Master password</label>
+        <div class="pw-wrap">
+          <input type="password" id="create-password" placeholder="at least 20 bits entropy" autocomplete="new-password"
+            oninput="updateEntropyMeter(this.value)">
+          <button class="pw-toggle" type="button" onclick="togglePw('create-password', this)">👁</button>
+        </div>
+        <div class="entropy-bar-wrap"><div class="entropy-bar" id="entropy-bar"></div></div>
+        <div class="entropy-label" id="entropy-label"></div>
+      </div>
+      <div class="field">
+        <label for="create-password2">Confirm password</label>
+        <div class="pw-wrap">
+          <input type="password" id="create-password2" placeholder="type it again" autocomplete="new-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('create-password2', this)">👁</button>
+        </div>
+      </div>
+      <div class="actions-bar">
+        <button class="btn" id="create-btn" type="submit">Create vault</button>
+      </div>
+    </form>
   </div>
 </section>
 
@@ -685,20 +687,22 @@ textarea { resize: vertical; min-height: 80px; }
     <button class="back-link" onclick="handleOpenExisting()">← Different folder</button>
     <h2>Register this device <span id="register-folder-tag" class="folder-tag"></span></h2>
     <p class="auth-sub">This vault hasn't been used in this browser before. Enter the master password to register.</p>
-    <div class="field">
-      <label for="register-device-label">Device name</label>
-      <input type="text" id="register-device-label" placeholder="e.g. Chirag's iPhone" autocomplete="off" maxlength="64">
-    </div>
-    <div class="field">
-      <label for="register-password">Master password</label>
-      <div class="pw-wrap">
-        <input type="password" id="register-password" placeholder="vault master password" autocomplete="current-password">
-        <button class="pw-toggle" type="button" onclick="togglePw('register-password', this)">👁</button>
+    <form onsubmit="handleRegisterDevice();return false;">
+      <div class="field">
+        <label for="register-device-label">Device name</label>
+        <input type="text" id="register-device-label" placeholder="e.g. Chirag's iPhone" autocomplete="off" maxlength="64">
       </div>
-    </div>
-    <div class="actions-bar">
-      <button class="btn" id="register-btn" onclick="handleRegisterDevice()">Register device</button>
-    </div>
+      <div class="field">
+        <label for="register-password">Master password</label>
+        <div class="pw-wrap">
+          <input type="password" id="register-password" placeholder="vault master password" autocomplete="current-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('register-password', this)">👁</button>
+        </div>
+      </div>
+      <div class="actions-bar">
+        <button class="btn" id="register-btn" type="submit">Register device</button>
+      </div>
+    </form>
   </div>
 </section>
 
@@ -1142,22 +1146,24 @@ textarea { resize: vertical; min-height: 80px; }
       Re-enter your master password, then touch your hardware key when prompted.
       Both factors will be required to unlock the vault.
     </p>
-    <div class="field">
-      <label for="bind-label">Key label</label>
-      <input type="text" id="bind-label" placeholder="e.g. YubiKey 5 (primary)" maxlength="64" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="bind-password">Master password</label>
-      <div class="pw-wrap">
-        <input type="password" id="bind-password" placeholder="master password" autocomplete="current-password">
-        <button class="pw-toggle" type="button" onclick="togglePw('bind-password', this)">👁</button>
+    <form onsubmit="handleBindKey();return false;">
+      <div class="field">
+        <label for="bind-label">Key label</label>
+        <input type="text" id="bind-label" placeholder="e.g. YubiKey 5 (primary)" maxlength="64" autocomplete="off">
       </div>
-    </div>
-    <div class="hint" id="bind-hint" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:10px"></div>
-    <div class="actions-bar">
-      <button class="btn ghost btn-sm" onclick="hideModal('modal-bind-key')">Cancel</button>
-      <button class="btn" id="bind-confirm-btn" onclick="handleBindKey()">Bind key</button>
-    </div>
+      <div class="field">
+        <label for="bind-password">Master password</label>
+        <div class="pw-wrap">
+          <input type="password" id="bind-password" placeholder="master password" autocomplete="current-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('bind-password', this)">👁</button>
+        </div>
+      </div>
+      <div class="hint" id="bind-hint" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:10px"></div>
+      <div class="actions-bar">
+        <button class="btn ghost btn-sm" type="button" onclick="hideModal('modal-bind-key')">Cancel</button>
+        <button class="btn" id="bind-confirm-btn" type="submit">Bind key</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -1171,18 +1177,20 @@ textarea { resize: vertical; min-height: 80px; }
   <div class="modal">
     <h3 id="prompt-pw-title">Enter master password</h3>
     <p id="prompt-pw-sub" style="font-size:13px;color:var(--muted);margin:0 0 14px"></p>
-    <div class="field">
-      <label for="prompt-pw-input">Master password</label>
-      <div class="pw-wrap">
-        <input type="password" id="prompt-pw-input" placeholder="master password" autocomplete="current-password">
-        <button class="pw-toggle" type="button" onclick="togglePw('prompt-pw-input', this)">👁</button>
+    <form onsubmit="_confirmPasswordPromptModal();return false;">
+      <div class="field">
+        <label for="prompt-pw-input">Master password</label>
+        <div class="pw-wrap">
+          <input type="password" id="prompt-pw-input" placeholder="master password" autocomplete="current-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('prompt-pw-input', this)">👁</button>
+        </div>
       </div>
-    </div>
-    <div class="hint" id="prompt-pw-hint" style="font-size:12px;color:var(--danger);min-height:16px;margin-bottom:10px"></div>
-    <div class="actions-bar">
-      <button class="btn ghost btn-sm" onclick="_cancelPasswordPromptModal()">Cancel</button>
-      <button class="btn" id="prompt-pw-confirm-btn" onclick="_confirmPasswordPromptModal()">Continue</button>
-    </div>
+      <div class="hint" id="prompt-pw-hint" style="font-size:12px;color:var(--danger);min-height:16px;margin-bottom:10px"></div>
+      <div class="actions-bar">
+        <button class="btn ghost btn-sm" type="button" onclick="_cancelPasswordPromptModal()">Cancel</button>
+        <button class="btn" id="prompt-pw-confirm-btn" type="submit">Continue</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -1194,34 +1202,36 @@ textarea { resize: vertical; min-height: 80px; }
       You'll need to touch each registered hardware key once during this operation,
       because each key's wrap blob is regenerated against the new password.
     </p>
-    <div class="field">
-      <label for="cmp-current">Current master password</label>
-      <div class="pw-wrap">
-        <input type="password" id="cmp-current" autocomplete="current-password">
-        <button class="pw-toggle" type="button" onclick="togglePw('cmp-current', this)">👁</button>
+    <form onsubmit="handleChangeMasterPw();return false;">
+      <div class="field">
+        <label for="cmp-current">Current master password</label>
+        <div class="pw-wrap">
+          <input type="password" id="cmp-current" autocomplete="current-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('cmp-current', this)">👁</button>
+        </div>
       </div>
-    </div>
-    <div class="field">
-      <label for="cmp-new">New master password</label>
-      <div class="pw-wrap">
-        <input type="password" id="cmp-new" autocomplete="new-password" oninput="updateEntropyMeter(this.value,'cmp-entropy-bar','cmp-entropy-label')">
-        <button class="pw-toggle" type="button" onclick="togglePw('cmp-new', this)">👁</button>
+      <div class="field">
+        <label for="cmp-new">New master password</label>
+        <div class="pw-wrap">
+          <input type="password" id="cmp-new" autocomplete="new-password" oninput="updateEntropyMeter(this.value,'cmp-entropy-bar','cmp-entropy-label')">
+          <button class="pw-toggle" type="button" onclick="togglePw('cmp-new', this)">👁</button>
+        </div>
+        <div class="entropy-bar-wrap"><div class="entropy-bar" id="cmp-entropy-bar"></div></div>
+        <div class="entropy-label" id="cmp-entropy-label"></div>
       </div>
-      <div class="entropy-bar-wrap"><div class="entropy-bar" id="cmp-entropy-bar"></div></div>
-      <div class="entropy-label" id="cmp-entropy-label"></div>
-    </div>
-    <div class="field">
-      <label for="cmp-new2">Confirm new password</label>
-      <div class="pw-wrap">
-        <input type="password" id="cmp-new2" autocomplete="new-password">
-        <button class="pw-toggle" type="button" onclick="togglePw('cmp-new2', this)">👁</button>
+      <div class="field">
+        <label for="cmp-new2">Confirm new password</label>
+        <div class="pw-wrap">
+          <input type="password" id="cmp-new2" autocomplete="new-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('cmp-new2', this)">👁</button>
+        </div>
       </div>
-    </div>
-    <div class="hint" id="cmp-hint" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:10px"></div>
-    <div class="actions-bar">
-      <button class="btn ghost btn-sm" onclick="hideModal('modal-change-master-pw')">Cancel</button>
-      <button class="btn" id="cmp-confirm-btn" onclick="handleChangeMasterPw()">Change password</button>
-    </div>
+      <div class="hint" id="cmp-hint" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:10px"></div>
+      <div class="actions-bar">
+        <button class="btn ghost btn-sm" type="button" onclick="hideModal('modal-change-master-pw')">Cancel</button>
+        <button class="btn" id="cmp-confirm-btn" type="submit">Change password</button>
+      </div>
+    </form>
   </div>
 </div>
 
