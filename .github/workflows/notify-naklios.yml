@@ -10,7 +10,9 @@ name: Notify NakliOS to re-mirror
 on:
   push:
     branches: [main]
-    paths: ['index.html']
+    paths:
+      - 'index.html'
+      - '.github/workflows/notify-naklios.yml'
   workflow_dispatch:
 
 jobs:
