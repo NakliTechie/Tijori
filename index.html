@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="author" content="Chirag Patnaik">
-<meta name="version" content="1.2.0">
+<meta name="version" content="1.3.0">
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'none';
   script-src 'unsafe-inline' 'wasm-unsafe-eval';
@@ -14,7 +14,7 @@
   connect-src 'none';
   base-uri 'none';
   form-action 'none';
-  frame-ancestors 'none';
+  frame-ancestors 'self';
   object-src 'none';
 ">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%237cc4ff'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='700' font-size='16' fill='%23001122'%3ETJ%3C/text%3E%3C/svg%3E">
@@ -566,6 +566,7 @@ textarea { resize: vertical; min-height: 80px; }
     <div class="welcome-actions">
       <button class="btn" onclick="handleCreateNew()">Create new vault</button>
       <button class="btn secondary" onclick="handleOpenExisting()" id="welcome-open-btn">Open vault</button>
+      <button class="btn ghost" onclick="handleOpenLocalVault()" id="welcome-local-btn" style="display:none">Local folder…</button>
     </div>
     <div id="reconnect-banner" class="welcome-reconnect">
       <strong id="reconnect-folder-name"></strong> needs permission to reconnect.<br>
@@ -676,7 +677,7 @@ textarea { resize: vertical; min-height: 80px; }
         </div>
       </div>
       <div class="actions-bar">
-        <button class="btn ghost btn-sm" type="button" id="unlock-diff-btn" onclick="handleOpenExisting()">Different folder</button>
+        <button class="btn ghost btn-sm" type="button" id="unlock-diff-btn" onclick="handleDifferentVault()">Different folder</button>
         <button class="btn" id="unlock-btn" type="submit">Unlock</button>
       </div>
     </form>
@@ -686,7 +687,7 @@ textarea { resize: vertical; min-height: 80px; }
 <!-- ══════════════ SCREEN: REGISTER DEVICE ══════════════ -->
 <section id="screen-register" class="auth-screen screen">
   <div class="auth-box">
-    <button class="back-link" onclick="handleOpenExisting()">← Different folder</button>
+    <button class="back-link" onclick="handleDifferentVault()">← Different folder</button>
     <h2>Register this device <span id="register-folder-tag" class="folder-tag"></span></h2>
     <p class="auth-sub">This vault hasn't been used in this browser before. Enter the master password to register.</p>
     <form onsubmit="handleRegisterDevice();return false;">
@@ -1300,7 +1301,7 @@ textarea { resize: vertical; min-height: 80px; }
     <h3 id="confirm-title"></h3>
     <p id="confirm-message"></p>
     <div class="actions-bar">
-      <button class="btn ghost btn-sm" onclick="resolveConfirm(false)">Cancel</button>
+      <button class="btn ghost btn-sm" id="confirm-cancel" onclick="resolveConfirm(false)">Cancel</button>
       <button class="btn btn-sm" id="confirm-ok" onclick="resolveConfirm(true)">Confirm</button>
     </div>
   </div>
@@ -1445,7 +1446,7 @@ textarea { resize: vertical; min-height: 80px; }
     </div>
     <hr class="sep">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-      <a href="guide/" target="_blank" rel="noopener" style="font-size:13px;color:var(--accent);text-decoration:none">📖 Full guide &amp; trust notes →</a>
+      <a href="https://tijori.naklitechie.com/guide/" target="_blank" rel="noopener" style="font-size:13px;color:var(--accent);text-decoration:none">📖 Full guide &amp; trust notes →</a>
       <button class="btn ghost btn-sm" onclick="hideModal('modal-help')">Close</button>
     </div>
   </div>
@@ -1465,10 +1466,28 @@ textarea { resize: vertical; min-height: 80px; }
   try { inNakliOS = !!(window.parent && window.parent !== window); } catch(_){}
   var currentTheme = null;
   var themeListeners = new Set();
+  var capListeners = new Set();
   var beforeCloseCb = null;
+  var capabilities = { hosted: inNakliOS, version: 1, fs: false };
+  var pendingRpc = new Map();
+  var rpcCounter = 0;
   function send(type, data){
     if (!inNakliOS) return;
     try { window.parent.postMessage(Object.assign({ type: type }, data || {}), '*'); } catch(_){}
+  }
+  function rpc(type, payload){
+    if (!inNakliOS) return Promise.reject(new Error('Not hosted — naklios.* unavailable standalone'));
+    return new Promise(function(resolve, reject){
+      var requestId = 'r' + (++rpcCounter) + '_' + Date.now();
+      pendingRpc.set(requestId, { resolve: resolve, reject: reject });
+      send(type, Object.assign({ requestId: requestId }, payload || {}));
+      setTimeout(function(){
+        if (pendingRpc.has(requestId)){
+          pendingRpc.delete(requestId);
+          reject(new Error('naklios RPC timeout: ' + type));
+        }
+      }, 30000);
+    });
   }
   window.addEventListener('message', function(e){
     var msg = e.data;
@@ -1478,11 +1497,20 @@ textarea { resize: vertical; min-height: 80px; }
       themeListeners.forEach(function(cb){ try { cb(currentTheme); } catch(_){} });
     } else if (msg.type === 'naklios:beforeclose'){
       if (beforeCloseCb){ try { beforeCloseCb(); } catch(_){} }
+    } else if (msg.type === 'naklios:capabilities'){
+      if (typeof msg.fs === 'boolean') capabilities.fs = msg.fs;
+      capListeners.forEach(function(cb){ try { cb(capabilities); } catch(_){} });
+    } else if (msg.type === 'naklios:fs:reply' && msg.requestId){
+      var pending = pendingRpc.get(msg.requestId);
+      if (!pending) return;
+      pendingRpc.delete(msg.requestId);
+      if (msg.error) pending.reject(new Error(msg.error));
+      else pending.resolve(msg.result);
     }
   });
   window.naklios = {
     version: 1,
-    capabilities: { hosted: inNakliOS, version: 1 },
+    capabilities: capabilities,
     ready: function(){ send('naklios:ready'); },
     title: function(s){ send('naklios:title', { title: String(s) }); },
     close: function(){ send('naklios:close'); },
@@ -1496,6 +1524,22 @@ textarea { resize: vertical; min-height: 80px; }
         return function(){ themeListeners.delete(cb); };
       },
       request: function(){ send('naklios:theme-request'); },
+    },
+    onCapabilitiesChange: function(cb){
+      if (typeof cb !== 'function') return function(){};
+      capListeners.add(cb);
+      try { cb(capabilities); } catch(_){}
+      return function(){ capListeners.delete(cb); };
+    },
+    requestCapabilities: function(){ send('naklios:capabilities-request'); },
+    fs: {
+      read: function(path){ return rpc('naklios:fs:read', { path: path }); },
+      readBinary: function(path){ return rpc('naklios:fs:readBinary', { path: path }); },
+      write: function(path, data){ return rpc('naklios:fs:write', { path: path, data: data }); },
+      append: function(path, line){ return rpc('naklios:fs:append', { path: path, line: line }); },
+      list: function(prefix){ return rpc('naklios:fs:list', { prefix: prefix || '' }); },
+      delete: function(path){ return rpc('naklios:fs:delete', { path: path }); },
+      exists: function(path){ return rpc('naklios:fs:exists', { path: path }); },
     },
   };
 })();
@@ -1782,6 +1826,7 @@ const S = {
   clipTimers: {},
   _pendingHandle: null,
   _isOpfs: false,
+  _isNaklios: false,
   _opfsVaultName: null,
   settings: { idleTimeout: 300, clipClear: 30, lockOnHide: true, lockOnHideGrace: 30, pwQuizDays: 30, backupReminderDays: 60 },
   // v1.1 v2-vault state (null/empty for v1 vaults):
@@ -1850,6 +1895,27 @@ async function idbSet(k, v) {
 }
 
 const FSA_AVAILABLE = 'showDirectoryPicker' in window;
+const NAKLIOS_DIR = Object.freeze({ name: 'naklOS storage', __nakliosFs: true });
+
+function hasNakliosStorage() {
+  return !!(window.naklios?.capabilities?.hosted && window.naklios?.capabilities?.fs);
+}
+
+function isNakliosDir(dir) {
+  return !!(dir && dir.__nakliosFs);
+}
+
+function storageDisplayName() {
+  if (S._isNaklios) return 'naklOS storage';
+  if (S._isOpfs) return S._opfsVaultName || 'browser vault';
+  return S.dirHandle?.name || 'vault';
+}
+
+function setStorageMode(mode) {
+  S._isNaklios = mode === 'naklios';
+  S._isOpfs = mode === 'opfs';
+  if (mode !== 'opfs') S._opfsVaultName = null;
+}
 
 // ══════════════════════════════════════════════════════════
 // FILE SYSTEM
@@ -1873,12 +1939,26 @@ async function listOpfsVaults() {
 }
 
 async function readFileText(dir, name) {
+  if (isNakliosDir(dir)) {
+    try { return await naklios.fs.read(name); }
+    catch (e) {
+      if (/not found|does not exist|404/i.test(e?.message || '')) return null;
+      try {
+        if (!(await naklios.fs.exists(name))) return null;
+      } catch {}
+      throw e;
+    }
+  }
   try {
     const fh = await dir.getFileHandle(name);
     return await (await fh.getFile()).text();
   } catch { return null; }
 }
 async function writeFileText(dir, name, text) {
+  if (isNakliosDir(dir)) {
+    await naklios.fs.write(name, text);
+    return;
+  }
   const fh = await dir.getFileHandle(name, { create: true });
   const w = await fh.createWritable();
   await w.write(text); await w.close();
@@ -1892,6 +1972,10 @@ async function writeMeta(dir, meta) {
   await writeFileText(dir, 'tijori-meta.json', JSON.stringify(meta, null, 2));
 }
 async function getAllStreamNames(dir) {
+  if (isNakliosDir(dir)) {
+    const names = await naklios.fs.list('');
+    return names.filter(name => name.startsWith('tijori-events-') && name.endsWith('.jsonl'));
+  }
   const names = [];
   for await (const [name] of dir.entries()) {
     if (name.startsWith('tijori-events-') && name.endsWith('.jsonl')) names.push(name);
@@ -1904,6 +1988,10 @@ async function readStream(dir, deviceId) {
   return t.split('\n').filter(l => l.trim());
 }
 async function appendLineToStream(dir, deviceId, line) {
+  if (isNakliosDir(dir)) {
+    await naklios.fs.append(`tijori-events-${deviceId}.jsonl`, line);
+    return;
+  }
   const existing = await readFileText(dir, `tijori-events-${deviceId}.jsonl`) ?? '';
   await writeFileText(dir, `tijori-events-${deviceId}.jsonl`, existing + line + '\n');
 }
@@ -1919,11 +2007,23 @@ async function atomicReplaceStream(dir, deviceId, content) {
   const tmpName = `${realName}.tmp`;
   await writeFileText(dir, tmpName, content);
   await writeFileText(dir, realName, content);
-  try { await dir.removeEntry(tmpName); } catch {}
+  try {
+    if (isNakliosDir(dir)) await naklios.fs.delete(tmpName);
+    else await dir.removeEntry(tmpName);
+  } catch {}
 }
 
 async function cleanupStaleStreamTmps(dir) {
   try {
+    if (isNakliosDir(dir)) {
+      const names = await naklios.fs.list('');
+      for (const name of names) {
+        if (name.startsWith('tijori-events-') && name.endsWith('.jsonl.tmp')) {
+          try { await naklios.fs.delete(name); } catch {}
+        }
+      }
+      return;
+    }
     for await (const [name] of dir.entries()) {
       if (name.startsWith('tijori-events-') && name.endsWith('.jsonl.tmp')) {
         try { await dir.removeEntry(name); } catch {}
@@ -2642,7 +2742,7 @@ async function createVault(dirHandle, password, deviceLabel) {
     S.deviceLabel = deviceLabel;
     S.salt = null;
     localStorage.setItem('tijori.deviceLabel', deviceLabel);
-    if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+    if (!S._isOpfs && !S._isNaklios) await idbSet('dirHandle', dirHandle);
     await appendEvent('device_registered', { device_id: S.deviceId, label: deviceLabel });
     S.entries = new Map();
     return;
@@ -2662,7 +2762,7 @@ async function createVault(dirHandle, password, deviceLabel) {
   S.vault_format_version = 1;
   S.legacy_key = null; S.master_secret = null; S.pw_key = null; S.bound_keys = [];
   localStorage.setItem('tijori.deviceLabel', deviceLabel);
-  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+  if (!S._isOpfs && !S._isNaklios) await idbSet('dirHandle', dirHandle);
   await appendEvent('device_registered', { device_id: S.deviceId, label: deviceLabel });
   S.entries = new Map();
 }
@@ -2708,7 +2808,7 @@ async function unlockVault(dirHandle, password) {
     S.salt = null;
     if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
     if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
-    if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+    if (!S._isOpfs && !S._isNaklios) await idbSet('dirHandle', dirHandle);
     await cleanupStaleStreamTmps(dirHandle);
     await loadAndMerge();
     const saved = localStorage.getItem('tijori.settings');
@@ -2737,7 +2837,7 @@ async function unlockVault(dirHandle, password) {
   S.legacy_key = null; S.master_secret = null; S.pw_key = null; S.bound_keys = [];
   if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
   if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
-  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+  if (!S._isOpfs && !S._isNaklios) await idbSet('dirHandle', dirHandle);
   await loadAndMerge();
   const saved = localStorage.getItem('tijori.settings');
   if (saved) { try { Object.assign(S.settings, JSON.parse(saved)); } catch {} }
@@ -2781,7 +2881,7 @@ async function unlockVaultWithKey(dirHandle, password, credIdB64url, prf_secret)
   S.salt = null;
   if (!S.deviceId) { S.deviceId = localStorage.getItem('tijori.deviceId') || uuid(); }
   if (!S.deviceLabel) { S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown device'; }
-  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+  if (!S._isOpfs && !S._isNaklios) await idbSet('dirHandle', dirHandle);
   await cleanupStaleStreamTmps(dirHandle);
   await loadAndMerge();
   const saved = localStorage.getItem('tijori.settings');
@@ -2834,7 +2934,7 @@ async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
 
     meta.device_roster = (meta.device_roster ?? []).concat([{ id: deviceId, label: deviceLabel, registered_at: nowISO() }]);
     await writeMeta(dirHandle, meta);
-    if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+    if (!S._isOpfs && !S._isNaklios) await idbSet('dirHandle', dirHandle);
     await appendEvent('device_registered', { device_id: deviceId, label: deviceLabel });
     await loadAndMerge();
     const saved = localStorage.getItem('tijori.settings');
@@ -2866,7 +2966,7 @@ async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
 
   meta.devices.push({ id: deviceId, label: deviceLabel, registered_at: nowISO() });
   await writeMeta(dirHandle, meta);
-  if (!S._isOpfs) await idbSet('dirHandle', dirHandle);
+  if (!S._isOpfs && !S._isNaklios) await idbSet('dirHandle', dirHandle);
   await appendEvent('device_registered', { device_id: deviceId, label: deviceLabel });
   await loadAndMerge();
   const saved = localStorage.getItem('tijori.settings');
@@ -2907,7 +3007,7 @@ function lock() {
 }
 
 function prepareUnlockScreen() {
-  const folder = S._isOpfs ? (S._opfsVaultName ?? '') : (S.dirHandle?.name ?? '');
+  const folder = storageDisplayName();
   const tag = $('unlock-folder-tag'); if (tag) tag.textContent = folder;
   const graceNote = $('unlock-grace-note');
   if (graceNote) {
@@ -2921,7 +3021,7 @@ function prepareUnlockScreen() {
     }
   }
   const diffBtn = $('unlock-diff-btn');
-  if (diffBtn) diffBtn.textContent = S._isOpfs ? 'Different vault' : 'Different folder';
+  if (diffBtn) diffBtn.textContent = (S._isOpfs || S._isNaklios) ? 'Different vault' : 'Different folder';
   const hint = $('unlock-hint'); if (hint) hint.textContent = '';
   const pass = $('unlock-pass'); if (pass) pass.value = '';
   // v1.1: show "Unlock with hardware key" primary action when meta has bound keys.
@@ -3127,9 +3227,12 @@ function toast(msg, { error = false, dur = 2500 } = {}) {
 // ══════════════════════════════════════════════════════════
 
 function renderTopbar() {
-  $('topbar-folder').textContent = S._isOpfs ? (S._opfsVaultName ?? 'vault') : (S.dirHandle?.name ?? 'vault');
+  $('topbar-folder').textContent = storageDisplayName();
   const badge = $('storage-badge');
-  if (badge) badge.style.display = S._isOpfs ? '' : 'none';
+  if (badge) {
+    badge.style.display = (S._isOpfs || S._isNaklios) ? '' : 'none';
+    badge.textContent = S._isNaklios ? 'naklOS' : 'browser';
+  }
 }
 
 function getFilteredEntries() {
@@ -3390,10 +3493,11 @@ async function deleteCurrentEntry() {
 
 let _confirmResolve = null;
 
-function confirmDialog(title, msg, okLabel = 'Confirm', danger = false) {
+function confirmDialog(title, msg, okLabel = 'Confirm', danger = false, cancelLabel = 'Cancel') {
   $('confirm-title').textContent = title;
   $('confirm-message').textContent = msg;
   $('confirm-ok').textContent = okLabel;
+  $('confirm-cancel').textContent = cancelLabel;
   $('confirm-ok').className = 'btn btn-sm' + (danger ? ' danger' : '');
   showModal('modal-confirm');
   return new Promise(res => { _confirmResolve = res; });
@@ -3437,7 +3541,7 @@ function _cancelPasswordPromptModal() {
 // ══════════════════════════════════════════════════════════
 
 function openSettings() {
-  $('set-folder-name').textContent = S.dirHandle?.name ?? '';
+  $('set-folder-name').textContent = storageDisplayName();
   $('set-count').textContent = S.entries.size + ' entries';
   $('set-idle').value = S.settings.idleTimeout;
   $('set-clip').value = S.settings.clipClear;
@@ -4035,7 +4139,7 @@ async function exportCsv() {
   }
 
   const blob = new Blob([rows.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
-  const vaultName = (S._isOpfs ? S._opfsVaultName : S.dirHandle?.name) || 'tijori';
+  const vaultName = storageDisplayName() || 'tijori';
   downloadBlob(blob, `${vaultName}-export-${_exportTimestamp()}.csv`);
   toast('CSV exported.');
 }
@@ -4070,7 +4174,7 @@ async function exportToKdbx() {
   try {
     const { Kdbx, Credentials, ProtectedValue } = window.kdbxweb;
     const cred = new Credentials(ProtectedValue.fromString(pw));
-    const vaultName = (S._isOpfs ? S._opfsVaultName : S.dirHandle?.name) || 'Tijori';
+    const vaultName = storageDisplayName() || 'Tijori';
     const db = Kdbx.create(cred, vaultName);
 
     // Configure KDBX4 KDF to match Tijori v2's Argon2id params
@@ -4435,7 +4539,7 @@ function formatExpiry(input) {
 // v1.2: KNOWN-VAULTS REGISTRY (multi-vault picker)
 // ══════════════════════════════════════════════════════════
 // IDB key 'known_vaults' → [{
-//   id, name, last_opened, vault_type: 'fsa'|'opfs',
+//   id, name, last_opened, vault_type: 'fsa'|'opfs'|'naklios',
 //   dirHandle?: FileSystemDirectoryHandle (FSA only),
 //   opfsVaultName?: string (OPFS only),
 //   is_default?: boolean
@@ -4452,7 +4556,8 @@ async function getKnownVaults() {
 async function setKnownVaults(arr) { await idbSet('known_vaults', arr); }
 
 // Add (or update last_opened on) a vault. Dedupes by FSA isSameEntry()
-// for FSA vaults and by opfsVaultName for OPFS vaults.
+// for FSA vaults, by opfsVaultName for OPFS vaults, and by the single
+// app-scoped naklOS namespace for hosted vaults.
 async function addKnownVault({ name, vault_type, dirHandle, opfsVaultName, set_default }) {
   const all = await getKnownVaults();
   for (const v of all) {
@@ -4468,6 +4573,11 @@ async function addKnownVault({ name, vault_type, dirHandle, opfsVaultName, set_d
         if (set_default) { all.forEach(x => x.is_default = false); v.is_default = true; }
         await setKnownVaults(all); return v;
       }
+      if (vault_type === 'naklios' && v.vault_type === 'naklios') {
+        v.last_opened = nowISO();
+        if (set_default) { all.forEach(x => x.is_default = false); v.is_default = true; }
+        await setKnownVaults(all); return v;
+      }
     } catch {}
   }
   const isFirst = all.length === 0;
@@ -4477,7 +4587,7 @@ async function addKnownVault({ name, vault_type, dirHandle, opfsVaultName, set_d
     is_default: !!set_default || isFirst,
   };
   if (vault_type === 'fsa') fresh.dirHandle = dirHandle;
-  else fresh.opfsVaultName = opfsVaultName;
+  else if (vault_type === 'opfs') fresh.opfsVaultName = opfsVaultName;
   if (fresh.is_default) all.forEach(x => x.is_default = false);
   all.push(fresh);
   await setKnownVaults(all);
@@ -4538,7 +4648,7 @@ async function renderWelcomeVaults() {
     return (b.last_opened||'').localeCompare(a.last_opened||'');
   });
   list.innerHTML = vaults.map(v => {
-    const icon = v.vault_type === 'opfs' ? '📱' : '📁';
+    const icon = v.vault_type === 'naklios' ? '☁️' : v.vault_type === 'opfs' ? '📱' : '📁';
     const ago = v.last_opened ? _relAgoShort(v.last_opened) : 'never';
     const badge = v.is_default ? '<span class="default-badge">default</span>' : '';
     return `<div class="vault-row${v.is_default ? ' is-default' : ''}" data-vault-id="${escHtml(v.id)}">
@@ -4584,6 +4694,15 @@ async function openKnownVault(id) {
       await updateKnownVault(id, { last_opened: nowISO() });
       return;
     }
+    if (v.vault_type === 'naklios') {
+      if (!hasNakliosStorage()) {
+        toast('Connect a naklOS Folder or Crate backend first.', { error: true });
+        return;
+      }
+      await _openNakliosVault();
+      await updateKnownVault(id, { last_opened: nowISO() });
+      return;
+    }
     const dir = v.dirHandle;
     if (!dir) { toast('Folder handle missing — re-pick the folder via "Open vault".', { error: true }); return; }
     let perm = await dir.queryPermission({ mode: 'readwrite' });
@@ -4593,7 +4712,7 @@ async function openKnownVault(id) {
     if (perm !== 'granted') { toast('Permission denied for ' + v.name, { error: true }); return; }
     const meta = await readMeta(dir);
     if (!meta) { toast('No Tijori vault in ' + v.name, { error: true }); return; }
-    S._isOpfs = false;
+    setStorageMode('fsa');
     S.meta = meta;
     S.dirHandle = dir;
     await idbSet('dirHandle', dir);
@@ -4652,7 +4771,7 @@ async function _vaultActionsForget() {
   const v = all.find(x => x.id === id); if (!v) return;
   const ok = await confirmDialog(
     'Forget "' + v.name + '"?',
-    'Tijori will remove this vault from the picker. Files on disk are untouched — re-add it via "Open vault". For OPFS-backed vaults, the data stays in browser storage until site data is cleared.',
+    'Tijori will remove this vault from the picker. Vault files are untouched — re-add it via "Open vault". OPFS data stays in browser storage, and naklOS data stays in its selected Folder or Crate backend.',
     'Forget', true
   );
   if (!ok) return;
@@ -4667,8 +4786,30 @@ async function _vaultActionsForget() {
 // ══════════════════════════════════════════════════════════
 
 async function handleCreateNew() {
+  if (hasNakliosStorage()) {
+    try {
+      if (await naklios.fs.exists('tijori-meta.json')) {
+        toast('naklOS storage already has a vault. Use "Open vault" instead.', { error: true });
+        return;
+      }
+      setStorageMode('naklios');
+      S.dirHandle = NAKLIOS_DIR;
+      $('create-folder-tag').style.display = '';
+      $('create-folder-tag').textContent = 'naklOS storage';
+      $('create-vault-name-wrap').style.display = 'none';
+      $('create-sub').textContent = 'Create an encrypted vault in this app’s naklOS storage. There is no recovery — export regularly.';
+      $('create-device-label').value = getDefaultDeviceLabel();
+      $('create-password').value = '';
+      $('create-password2').value = '';
+      updateEntropyMeter('');
+      showScreen('create');
+    } catch (e) {
+      toast(e.message, { error: true });
+    }
+    return;
+  }
   if (!FSA_AVAILABLE) {
-    S._isOpfs = true;
+    setStorageMode('opfs');
     $('create-folder-tag').style.display = 'none';
     $('create-vault-name-wrap').style.display = '';
     $('create-vault-name').value = 'My Vault';
@@ -4687,7 +4828,7 @@ async function handleCreateNew() {
       toast('This folder already has a vault. Use "Open vault" instead.', { error: true });
       return;
     }
-    S._isOpfs = false;
+    setStorageMode('fsa');
     S.dirHandle = dir;
     $('create-folder-tag').style.display = '';
     $('create-folder-tag').textContent = dir.name;
@@ -4702,6 +4843,43 @@ async function handleCreateNew() {
 }
 
 async function handleOpenExisting() {
+  if (hasNakliosStorage()) {
+    try {
+      if (await naklios.fs.exists('tijori-meta.json')) {
+        await _openNakliosVault();
+        return;
+      }
+      if (!FSA_AVAILABLE) {
+        toast('No Tijori vault found in naklOS storage.', { error: true });
+        return;
+      }
+      const shouldImport = await confirmDialog(
+        'No naklOS vault yet',
+        'Import an existing Tijori folder into naklOS storage, or keep working directly from a local folder. Import copies only the encrypted vault files and leaves the source untouched.',
+        'Import folder',
+        false,
+        'Use local'
+      );
+      if (shouldImport) await importVaultToNaklios();
+      else await handleOpenLocalVault();
+    } catch (e) {
+      toast(e.message, { error: true });
+    }
+    return;
+  }
+  await handleOpenLocalVault();
+}
+
+async function handleDifferentVault() {
+  if (S._isNaklios) {
+    try { await renderWelcomeVaults(); } catch {}
+    showScreen('welcome');
+    return;
+  }
+  await handleOpenLocalVault();
+}
+
+async function handleOpenLocalVault() {
   if (!FSA_AVAILABLE) {
     const vaults = await listOpfsVaults();
     if (vaults.length === 0) {
@@ -4715,7 +4893,7 @@ async function handleOpenExisting() {
     const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
     const meta = await readMeta(dir);
     if (!meta) { toast('No Tijori vault found in that folder.', { error: true }); return; }
-    S._isOpfs = false;
+    setStorageMode('fsa');
     S.meta = meta; S.dirHandle = dir;
     await idbSet('dirHandle', dir);
     // v1.2: register in the multi-vault picker.
@@ -4739,12 +4917,87 @@ async function handleOpenExisting() {
   } catch (e) { if (e.name !== 'AbortError') toast(e.message, { error: true }); }
 }
 
+async function _openNakliosVault() {
+  const meta = await readMeta(NAKLIOS_DIR);
+  if (!meta) { toast('No Tijori vault found in naklOS storage.', { error: true }); return; }
+  setStorageMode('naklios');
+  S.meta = meta;
+  S.dirHandle = NAKLIOS_DIR;
+  try {
+    await addKnownVault({ name: 'naklOS storage', vault_type: 'naklios', set_default: true });
+  } catch {}
+  const storedId = localStorage.getItem('tijori.deviceId');
+  const registered = metaDevices(meta).some(d => d.id === storedId);
+  if (registered) {
+    S.deviceId = storedId;
+    S.deviceLabel = localStorage.getItem('tijori.deviceLabel') || 'Unknown';
+    prepareUnlockScreen();
+    showScreen('unlock');
+  } else {
+    $('register-folder-tag').textContent = 'naklOS storage';
+    $('register-device-label').value = getDefaultDeviceLabel();
+    $('register-password').value = '';
+    if (!S.deviceId) S.deviceId = uuid();
+    showScreen('register');
+  }
+}
+
+async function importVaultToNaklios() {
+  if (!FSA_AVAILABLE) throw new Error('Folder import is not available in this browser.');
+  const source = await window.showDirectoryPicker({ mode: 'read' });
+  const metaText = await readFileText(source, 'tijori-meta.json');
+  let meta;
+  try { meta = metaText ? JSON.parse(metaText) : null; } catch {}
+  if (!meta) throw new Error('No valid Tijori vault found in that folder.');
+  if (metaVersion(meta) === 2 && !metaPwWrapEnabled(meta)) {
+    throw new Error('This vault has password-only fallback disabled. Enable it in the standalone Tijori first; hardware keys are origin-bound and cannot unlock the copy at naklios.dev.');
+  }
+
+  const streamNames = await getAllStreamNames(source);
+  if (streamNames.length === 0) throw new Error('The selected vault has no event streams.');
+  const destinationNames = await naklios.fs.list('');
+  if (destinationNames.some(name =>
+    name === 'tijori-meta.json' ||
+    (name.startsWith('tijori-events-') && (name.endsWith('.jsonl') || name.endsWith('.jsonl.tmp')))
+  )) {
+    throw new Error('naklOS storage contains a partial or existing Tijori vault. Remove those vault files before importing.');
+  }
+
+  const confirmed = await confirmDialog(
+    'Copy vault into naklOS storage?',
+    `This will copy ${streamNames.length} encrypted event stream${streamNames.length === 1 ? '' : 's'} and the vault metadata. The source folder stays untouched. Existing hardware keys are tied to the original site; unlock with the password fallback here, then bind a new key.`,
+    'Copy encrypted vault'
+  );
+  if (!confirmed) return;
+
+  const copied = [];
+  try {
+    for (const name of streamNames) {
+      const content = await readFileText(source, name);
+      if (content == null) throw new Error('Could not read ' + name);
+      await naklios.fs.write(name, content);
+      copied.push(name);
+    }
+    // Metadata is the commit marker: an interrupted copy never appears as a
+    // complete destination vault.
+    await naklios.fs.write('tijori-meta.json', metaText);
+    copied.push('tijori-meta.json');
+  } catch (e) {
+    for (const name of copied.reverse()) {
+      try { await naklios.fs.delete(name); } catch {}
+    }
+    throw new Error('Import failed and partial files were cleaned up: ' + e.message);
+  }
+  toast('Encrypted vault copied to naklOS storage.');
+  await _openNakliosVault();
+}
+
 async function _openOpfsVault(name) {
   try {
     const dir = await opfsVaultDir(name);
     const meta = await readMeta(dir);
     if (!meta) { toast('Vault not found.', { error: true }); return; }
-    S.meta = meta; S.dirHandle = dir; S._isOpfs = true; S._opfsVaultName = name;
+    S.meta = meta; S.dirHandle = dir; setStorageMode('opfs'); S._opfsVaultName = name;
     await idbSet('opfsVaultName', name);
     // v1.2: register in the multi-vault picker.
     try { await addKnownVault({ name, vault_type: 'opfs', opfsVaultName: name, set_default: true }); } catch {}
@@ -4784,7 +5037,7 @@ async function handleReconnect() {
   try {
     const perm = await handle.requestPermission({ mode: 'readwrite' });
     if (perm === 'granted') {
-      S.dirHandle = handle; S._pendingHandle = null;
+      S.dirHandle = handle; S._pendingHandle = null; setStorageMode('fsa');
       // Re-read meta now that we have permission, so prepareUnlockScreen sees
       // the right bound_keys / pw_wrap state.
       try { S.meta = await readMeta(handle); } catch {}
@@ -4816,9 +5069,11 @@ async function handleCreateVault() {
     $('create-password').value = ''; $('create-password2').value = '';
     // v1.2: register the new vault in the known-vaults picker.
     try {
-      await addKnownVault(S._isOpfs
-        ? { name: S._opfsVaultName, vault_type: 'opfs', opfsVaultName: S._opfsVaultName, set_default: true }
-        : { name: dir.name, vault_type: 'fsa', dirHandle: dir, set_default: true });
+      await addKnownVault(S._isNaklios
+        ? { name: 'naklOS storage', vault_type: 'naklios', set_default: true }
+        : S._isOpfs
+          ? { name: S._opfsVaultName, vault_type: 'opfs', opfsVaultName: S._opfsVaultName, set_default: true }
+          : { name: dir.name, vault_type: 'fsa', dirHandle: dir, set_default: true });
     } catch {}
     showScreen('vault'); toast('Vault created!');
     afterUnlockHousekeeping();
@@ -4835,7 +5090,7 @@ async function handleCreateVault() {
 let _unlockCountdownTimer = null;
 
 function _lockoutKey() {
-  const name = S.dirHandle?.name || S._opfsVaultName || '_default';
+  const name = S._isNaklios ? '_naklios' : (S.dirHandle?.name || S._opfsVaultName || '_default');
   return `tijori.unlock.lockout.${name}`;
 }
 function _getLockoutState() {
@@ -4880,7 +5135,7 @@ function _resumeUnlockCountdownIfActive() {
 // Both reduce the "I lost it forever" disaster surface without changing
 // the threat model. Per-vault state in localStorage.
 
-function _vaultKey() { return S.dirHandle?.name || S._opfsVaultName || '_default'; }
+function _vaultKey() { return S._isNaklios ? '_naklios' : (S.dirHandle?.name || S._opfsVaultName || '_default'); }
 function _pwQuizKey() { return `tijori.pwQuiz.lastOk.${_vaultKey()}`; }
 function _exportTsKey() { return `tijori.export.lastTs.${_vaultKey()}`; }
 function _backupReminderKey() { return `tijori.backupReminder.lastShown.${_vaultKey()}`; }
@@ -5442,7 +5697,32 @@ async function _rfc6238SelfTest() {
   console.log(`Tijori TOTP self-test: ${pass}/${cases.length} passed`);
 }
 
+function refreshHostedStorageUi() {
+  const hosted = !!naklios.capabilities.hosted;
+  const fs = hasNakliosStorage();
+  const localBtn = $('welcome-local-btn');
+  const openBtn = $('welcome-open-btn');
+  const footer = $('welcome-footer');
+  if (localBtn) localBtn.style.display = hosted && fs && FSA_AVAILABLE ? '' : 'none';
+  if (openBtn) openBtn.textContent = fs ? 'Open naklOS vault' : 'Open vault';
+  if (!footer) return;
+  if (fs) {
+    footer.innerHTML = 'Vault files are app-scoped through naklOS.<br>Tijori makes no direct network requests.';
+  } else if (hosted) {
+    footer.innerHTML = FSA_AVAILABLE
+      ? 'Connect a Folder or Crate backend in naklOS,<br>or continue with a local folder.'
+      : 'Connect a Folder or Crate backend in naklOS.';
+  } else if (!FSA_AVAILABLE) {
+    footer.innerHTML = 'No network requests after page load.<br>Your vault is stored in this browser.';
+  } else {
+    footer.innerHTML = 'No network requests after page load.<br>Your vault lives in a folder you choose.';
+  }
+}
+
 async function init() {
+  naklios.onCapabilitiesChange(refreshHostedStorageUi);
+  naklios.requestCapabilities();
+  refreshHostedStorageUi();
   _rfc6238SelfTest();
   S.deviceId = localStorage.getItem('tijori.deviceId');
   S.deviceLabel = localStorage.getItem('tijori.deviceLabel');
@@ -5489,7 +5769,7 @@ async function init() {
         const dir = await opfsVaultDir(def.opfsVaultName);
         const meta = await readMeta(dir);
         if (meta) {
-          S.dirHandle = dir; S.meta = meta; S._isOpfs = true; S._opfsVaultName = def.opfsVaultName;
+          S.dirHandle = dir; S.meta = meta; setStorageMode('opfs'); S._opfsVaultName = def.opfsVaultName;
           await updateKnownVault(def.id, { last_opened: nowISO() });
           prepareUnlockScreen();
           showScreen('unlock');
@@ -5502,7 +5782,7 @@ async function init() {
         if (perm === 'granted') {
           const meta = await readMeta(def.dirHandle);
           if (meta) {
-            S.dirHandle = def.dirHandle; S.meta = meta;
+            S.dirHandle = def.dirHandle; S.meta = meta; setStorageMode('fsa');
             await updateKnownVault(def.id, { last_opened: nowISO() });
             prepareUnlockScreen();
             showScreen('unlock');
@@ -5517,10 +5797,6 @@ async function init() {
         }
       } catch {}
     }
-  }
-
-  if (!FSA_AVAILABLE) {
-    $('welcome-footer').innerHTML = 'No network requests after page load.<br>Your vault is stored in this browser.';
   }
 
   // Render the multi-vault picker (no-op if known_vaults is empty) and show

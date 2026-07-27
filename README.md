@@ -5,8 +5,9 @@
 
 **A password vault in one HTML file.**
 
-No install, no account, no server, no sync service.
-Your vault is a folder. Move the folder and your vault moves with it.
+No install, no account, no dedicated Tijori server.
+Standalone, your vault is a folder. Inside naklOS, it can use the app-scoped
+Folder or encrypted Crate backend through `naklios.fs`.
 Optional hardware-key second factor via WebAuthn PRF.
 
 ---
@@ -14,6 +15,9 @@ Optional hardware-key second factor via WebAuthn PRF.
 ## What it does
 
 - Stores **Login**, **Card**, **Note**, and **TOTP Code** entries
+- **naklOS storage bridge** — the same encrypted vault format can live under
+  Tijori's app-scoped namespace in a connected naklOS Folder or Crate backend.
+  Standalone File System Access and OPFS behavior is unchanged.
 - **Optional hardware-key second factor** — bind any FIDO2 / WebAuthn authenticator (YubiKey, Titan, Solo, Touch ID, iCloud passkey, Android passkey) via the PRF extension. Hardware-derived secret mixed into the key derivation; **both** master password and key required to unlock. Multiple keys per vault for backup-key safety.
 - **Argon2id key derivation** for new vaults (memory-hard, GPU-resistant). Existing PBKDF2 vaults migrate on next save; both formats remain readable.
 - **Multi-vault picker** on the welcome screen — keep personal / work / family vaults side-by-side; one click each. Set a default to auto-open on launch.
@@ -49,6 +53,29 @@ Tested authenticators:
 
 **Requirements:** Chrome 116+, Edge 116+, or Safari 18+. Firefox does not yet ship PRF in stable. Tijori falls back to password-only on browsers without PRF support. Hardware-key binding also requires Tijori served over HTTPS or localhost — the "Save Page As" deployment mode loses this feature (vault still works, just no hardware-key option).
 
+Hardware credentials are origin-bound. A key registered at
+`tijori.naklitechie.com` cannot unlock the mirrored app at `naklios.dev`.
+Tijori therefore refuses to import a hardware-key-only vault into naklOS
+storage. Enable password-only fallback in the standalone app first, import,
+unlock with the password at `naklios.dev`, and bind a new key there.
+
+## naklOS storage
+
+When Tijori is hosted at `naklios.dev/apps/tijori/` and a naklOS Folder or
+Crate backend is connected, `Create new vault` and `Open naklOS vault` use the
+app-scoped `naklios.fs` namespace. The host limits Tijori to
+`apps/tijori/`; Tijori cannot read another app's data.
+
+Import copies only `tijori-meta.json` and the encrypted
+`tijori-events-*.jsonl` streams. It leaves the source folder untouched,
+writes metadata last as a commit marker, and cleans up files if a copy fails.
+The vault format is unchanged.
+
+Tijori's own Content Security Policy still uses `connect-src 'none'`.
+When Crate is selected, naklOS performs the storage transport outside the
+Tijori iframe; Tijori communicates with its same-origin host using
+`postMessage`.
+
 ## The vault outlives the tool
 
 Your vault is yours. Three ways to leave Tijori without losing data:
@@ -59,7 +86,9 @@ Your vault is yours. Three ways to leave Tijori without losing data:
 
 ## What it deliberately isn't
 
-- **No server.** Vault files never leave the folder you choose.
+- **No dedicated Tijori server.** Standalone vault files never leave the
+  folder you choose. In hosted mode, storage goes only to the naklOS backend
+  you explicitly grant to Tijori.
 - **No account.** There is nothing to log in to.
 - **No recovery.** Forget the master password and your vault is gone. Back up.
 - **No telemetry, no analytics, no network requests of any kind after page load.**
@@ -81,7 +110,7 @@ Your vault is yours. Three ways to leave Tijori without losing data:
 | Hash chain | SHA-256 over previous raw event-line string; `genesis` for first |
 | Merge | Union all device streams, sort by `(ts, device_id)`, per-field last-writer-wins |
 | TOTP | RFC 6238 — WebCrypto `HMAC-SHA-{1,256,512}`, base32 inline (~25 lines) |
-| Storage | `FileSystemDirectoryHandle` — File System Access API on desktop, Origin Private File System (OPFS) fallback on iOS / mobile |
+| Storage | Standalone: `FileSystemDirectoryHandle` on desktop, OPFS fallback on iOS/mobile. Hosted: app-scoped `naklios.fs` over a user-selected naklOS Folder or encrypted Crate backend. |
 | Reconnect | FSA handle persisted in IndexedDB (permission re-requested on next visit); OPFS vault name persisted (reconnects silently) |
 | QR flash | Archive chunked into `TJ1|total|index|b64` frames, Nayuki qrcodegen inlined, receiver via `BarcodeDetector` API. Out-of-order and duplicate frames are fine; receiver waits for all indices. |
 | Dependencies | **Zero** |
@@ -115,7 +144,7 @@ Event types: `device_registered`, `device_revoked`, `entry_created`, `entry_upda
 
 ## Usage
 
-1. Open `index.html` in Chrome, Edge, Firefox (desktop) or Safari 16.4+ / iOS. Desktop uses the File System Access API; mobile falls back to Origin Private File System (OPFS).
+1. Open `index.html` in Chrome, Edge, Firefox (desktop) or Safari 16.4+ / iOS. Desktop uses the File System Access API; mobile falls back to Origin Private File System (OPFS). When opened inside naklOS with a connected backend, Tijori offers naklOS storage and keeps a separate **Local folder…** action.
 2. **Create new vault** → pick an empty folder (desktop) or name a browser vault (mobile) → set a device name and master password.
 3. **＋ Add** → choose Login, Card, Note, or Code.
    - For TOTP codes: paste an `otpauth://` URI to auto-fill, or enter the Base32 secret manually.
