@@ -11,19 +11,31 @@ const app = scripts.at(-1);
 new Function(sdk);
 new Function(app);
 
+assert.doesNotMatch(
+  html,
+  /\b(?:naklOS|nakliOS|Naklios)\b/,
+  'Tijori must use the NakliOS product spelling',
+);
 assert.match(html, /connect-src 'none'/, 'Tijori must keep direct network access disabled');
-assert.match(html, /frame-ancestors 'self'/, 'same-origin naklOS mirror must be iframeable');
+assert.match(html, /frame-ancestors 'self'/, 'same-origin NakliOS mirror must be iframeable');
 assert.match(app, /const NAKLIOS_DIR = Object\.freeze/);
 assert.match(app, /naklios\.fs\.read\(name\)/);
 assert.match(app, /naklios\.fs\.write\(name, text\)/);
 assert.match(app, /naklios\.fs\.append/);
 assert.match(app, /naklios\.fs\.list\(''\)/);
+assert.match(app, /Different folder or Crate/);
+assert.match(app, /function showStorageLocationPicker\(\)/);
+assert.match(app, /title\.textContent = backend\.id === 'crate' \? 'Mounted Crate'/);
+assert.match(app, /await importVaultToNakliOS\(currentLocalDir\)/,
+  'switching an open local vault to an empty Crate should reuse that folder as the copy source');
+assert.match(app, /nakliosBackend\?: 'fsa'\|'crate'/,
+  'known hosted vaults must remain distinct per NakliOS backend');
 assert.match(app, /window\.showDirectoryPicker/, 'standalone FSA path must remain available');
 assert.match(app, /metaVersion\(meta\) === 2 && !metaPwWrapEnabled\(meta\)/,
   'origin-bound hardware-key-only vaults must be refused during import');
 
 const importBody = app.slice(
-  app.indexOf('async function importVaultToNaklios()'),
+  app.indexOf('async function importVaultToNakliOS('),
   app.indexOf('async function _openOpfsVault')
 );
 assert.ok(
@@ -60,8 +72,26 @@ assert.equal(sent.at(-1).type, 'naklios:capabilities-request');
 
 let observedFs = false;
 childWindow.naklios.onCapabilitiesChange(caps => { observedFs = caps.fs; });
-messageListener({ data: { type: 'naklios:capabilities', fs: true } });
+messageListener({
+  data: {
+    type: 'naklios:capabilities',
+    fs: true,
+    fsBackends: [{ id: 'crate', label: 'Crate', name: 'vault-bucket' }],
+    fsBackend: null,
+  },
+});
 assert.equal(observedFs, true);
+assert.equal(childWindow.naklios.capabilities.fsBackends[0].id, 'crate');
+assert.equal(childWindow.naklios.capabilities.fsBackend, null);
+
+const selectPromise = childWindow.naklios.fs.useBackend('crate');
+const selectRequest = sent.at(-1);
+assert.equal(selectRequest.type, 'naklios:fs:selectBackend');
+assert.equal(selectRequest.backend, 'crate');
+messageListener({
+  data: { type: 'naklios:fs:reply', requestId: selectRequest.requestId, result: true },
+});
+assert.equal(await selectPromise, true);
 
 const writePromise = childWindow.naklios.fs.write('vault.json', '{}');
 const request = sent.at(-1);
@@ -72,4 +102,4 @@ messageListener({
 });
 await writePromise;
 
-console.log('Tijori naklOS storage contract: PASS');
+console.log('Tijori NakliOS storage contract: PASS');

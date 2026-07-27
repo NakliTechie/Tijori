@@ -177,7 +177,7 @@ td:last-child { color: var(--muted); }
       Tijori (तिजोरी, "strongbox") is a browser-native password vault.
       Unlike a hosted password manager, <strong>Tijori has no account and no dedicated
       service holding your data.</strong> Standalone, your vault is a folder of files on
-      your disk. Inside naklOS, you may instead grant Tijori an app-scoped Folder or
+      your disk. Inside NakliOS, you may instead grant Tijori an app-scoped Folder or
       encrypted Crate backend.
     </p>
     <p>
@@ -216,7 +216,7 @@ td:last-child { color: var(--muted); }
         </p>
       </div>
       <div class="card">
-        <h3>4. Run inside naklOS</h3>
+        <h3>4. Run inside NakliOS</h3>
         <p>
           Open Tijori from <a href="https://naklios.dev/" target="_blank" rel="noopener">naklios.dev</a>.
           A connected Folder or encrypted Crate backend is exposed only through
@@ -448,7 +448,7 @@ td:last-child { color: var(--muted); }
           <tr><td>Hash chain</td><td>SHA-256 of previous raw event-line string, embedded as <code>prev_hash</code>. Break any byte, break the chain. Verifiable in-app via Settings → Vault.</td></tr>
           <tr><td>TOTP</td><td>RFC 6238 over WebCrypto HMAC-SHA-{1,256,512}. Base32 decoder inline (~25 lines). No library.</td></tr>
           <tr><td>File I/O</td><td>Standalone: File System Access API (<code>showDirectoryPicker</code>) with an OPFS fallback. Hosted: app-scoped <code>naklios.fs</code> over the Folder or Crate backend the user grants.</td></tr>
-          <tr><td>Network requests</td><td>Tijori itself makes zero after page load; CSP has <code>connect-src 'none'</code>. In hosted Crate mode, naklOS performs storage transport outside the Tijori iframe.</td></tr>
+          <tr><td>Network requests</td><td>Tijori itself makes zero after page load; CSP has <code>connect-src 'none'</code>. In hosted Crate mode, NakliOS performs storage transport outside the Tijori iframe.</td></tr>
           <tr><td>Hardware-key binding</td><td>WebAuthn PRF extension. Multiple keys per vault. <code>master_secret</code> wrapped per key — never re-encrypts vault data, only the wrap blobs change.</td></tr>
           <tr><td>Dependencies</td><td>Zero. No CDN, no npm, no framework.</td></tr>
           <tr><td>Build step</td><td>None. The source file is the app.</td></tr>
@@ -472,7 +472,7 @@ td:last-child { color: var(--muted); }
     <div class="cards">
       <div class="card">
         <h3>Browser requirement</h3>
-        <p>Desktop folder picking requires Chrome or Edge. Firefox and Safari use the OPFS fallback standalone; inside naklOS they can use a connected host backend.</p>
+        <p>Desktop folder picking requires Chrome or Edge. Firefox and Safari use the OPFS fallback standalone; inside NakliOS they can use a connected host backend.</p>
       </div>
       <div class="card">
         <h3>Combined passwords + TOTP</h3>
@@ -499,7 +499,7 @@ td:last-child { color: var(--muted); }
     <div class="cards" style="margin-bottom:24px">
       <div class="card">
         <h3>Server breach</h3>
-        <p>There is no dedicated Tijori service or account database to breach. Standalone data stays in your chosen folder; hosted data goes only to the naklOS Folder or encrypted Crate backend you grant.</p>
+        <p>There is no dedicated Tijori service or account database to breach. Standalone data stays in your chosen folder; hosted data goes only to the NakliOS Folder or encrypted Crate backend you grant.</p>
       </div>
       <div class="card">
         <h3>Vendor lock-in</h3>
