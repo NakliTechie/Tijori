@@ -4,8 +4,8 @@ name: Notify NakliOS to re-mirror
 # its same-origin mirror at naklios.dev/apps/tijori/. The sync workflow
 # there opens a PR with any drift, which Chirag reviews + merges.
 #
-# Requires the secret NAKLIOS_DISPATCH_TOKEN (a fine-grained PAT with
-# Actions:write on NakliTechie/nakli-dev). See nakli-dev README for setup.
+# Uses NAKLIOS_DISPATCH_TOKEN when configured. Without it, this workflow exits
+# successfully and nakli-dev's six-hour scheduled sync provides the fallback.
 
 on:
   push:
@@ -16,8 +16,15 @@ on:
 jobs:
   trigger-mirror:
     runs-on: ubuntu-latest
+    env:
+      DISPATCH_TOKEN: ${{ secrets.NAKLIOS_DISPATCH_TOKEN }}
     steps:
       - name: Trigger nakli-dev sync workflow
+        if: env.DISPATCH_TOKEN != ''
         run: gh workflow run sync-mirrors.yml --repo NakliTechie/nakli-dev --ref main
         env:
-          GH_TOKEN: ${{ secrets.NAKLIOS_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ env.DISPATCH_TOKEN }}
+
+      - name: Use scheduled-sync fallback
+        if: env.DISPATCH_TOKEN == ''
+        run: echo "NAKLIOS_DISPATCH_TOKEN is not configured; nakli-dev will discover this release on its six-hour sync."
