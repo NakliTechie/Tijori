@@ -2266,7 +2266,7 @@ async function sha256b64(str) {
 function escHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function $(id) { return document.getElementById(id); }
 
@@ -4489,7 +4489,7 @@ function renderDeviceRoster() {
         <div class="device-id">${d.id.slice(0, 12)}… · ${(d.registered_at ?? '').slice(0, 10)}</div>
       </div>
       ${d.id !== S.deviceId
-        ? `<button class="btn ghost btn-sm" onclick="revokeDevice('${d.id}','${escHtml(d.label)}')">Revoke</button>`
+        ? `<button class="btn ghost btn-sm" onclick="revokeDevice('${escHtml(String(d.id))}','${escHtml(String(d.label))}')">Revoke</button>`
         : ''}
     </div>`).join('');
 }
@@ -6253,7 +6253,7 @@ async function renderCodesGrid() {
           <div class="code-value" id="cv-${e.id}">— — — — — —</div>
         </div>
         <div class="code-next">counter: <strong id="ctr-${e.id}">${counter}</strong> · click to generate next</div>
-        <div style="display:none" id="code-raw-${e.id}" data-id="${e.id}" data-kind="hotp" data-counter="${counter}" data-digits="${digits}" data-algorithm="${algorithm}" data-secret="${escHtml(secret)}"></div>
+        <div style="display:none" id="code-raw-${e.id}" data-id="${e.id}" data-kind="hotp" data-counter="${counter}" data-digits="${digits}" data-algorithm="${escHtml(algorithm)}" data-secret="${escHtml(secret)}"></div>
       </div>`;
     }
 
@@ -6283,7 +6283,7 @@ async function renderCodesGrid() {
         </div>
       </div>
       ${expiring && nextCode ? `<div class="code-next">next: <strong>${nextCode}</strong></div>` : '<div class="code-next"></div>'}
-      <div style="display:none" id="code-raw-${e.id}" data-id="${e.id}" data-kind="totp" data-period="${period}" data-digits="${digits}" data-algorithm="${algorithm}" data-secret="${escHtml(secret)}"></div>
+      <div style="display:none" id="code-raw-${e.id}" data-id="${e.id}" data-kind="totp" data-period="${period}" data-digits="${digits}" data-algorithm="${escHtml(algorithm)}" data-secret="${escHtml(secret)}"></div>
     </div>`;
   }));
 
@@ -6432,7 +6432,8 @@ function previewOtpauthPaste(text) {
     type: 'code',
     fields: {
       label: p.label, secret: p.secret, account: p.account,
-      issuer: p.issuer, algorithm: p.algorithm,
+      issuer: p.issuer,
+      algorithm: (['SHA-1','SHA-256','SHA-512'].includes(p.algorithm) ? p.algorithm : 'SHA-1'),
       digits: String(p.digits), period: String(p.period),
       kind: p.kind, counter: String(p.counter || 0)
     }
