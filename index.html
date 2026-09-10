@@ -1496,7 +1496,7 @@ textarea { resize: vertical; min-height: 80px; }
 <!-- naklios.js SDK — vendored inline. Standalone-safe (no-op when window === window.parent).
      Canonical source: https://github.com/NakliTechie/nakli-dev/blob/main/sdk/naklios.js -->
 <script>
-/* naklios-sdk:begin ver=2 sha256=c53f2f47805dbde260a74fa5aaa259b7032ae06325f2a7a0dc23f10c9d8b8220 — DO NOT EDIT until :end; run `node scripts/vendor-naklios-sdk.mjs` */
+/* naklios-sdk:begin ver=2 sha256=8322d238687f2e71538e3cca94ea3bb27a482b4bfce91ff0533d1db6267ed667 — DO NOT EDIT until :end; run `node scripts/vendor-naklios-sdk.mjs` */
 /*!
  * naklios.js — cooperative SDK for apps hosted inside NakliOS (Immersive mode)
  *
@@ -1597,7 +1597,7 @@ textarea { resize: vertical; min-height: 80px; }
     // a real host handshake, so the adapter still self-corrects with no channel.
     hosted: inNakliOS || naklFlag,
     flagged: naklFlag,
-    version: 1,
+    version: 2,
     fs: false,
     fsBackends: [],
     fsBackend: null,
@@ -1747,19 +1747,22 @@ textarea { resize: vertical; min-height: 80px; }
     var finishReason = 'stop';
     var toolCalls = null;
     var usage = null;
+    var model = null;
     for await (var chunk of stream) {
       var choice = chunk.choices && chunk.choices[0];
       if (choice && choice.delta && choice.delta.content) content += choice.delta.content;
       if (choice && choice.delta && choice.delta.tool_calls) toolCalls = choice.delta.tool_calls;
       if (choice && choice.finish_reason) finishReason = choice.finish_reason;
       if (chunk.usage) usage = chunk.usage;
+      // the last chunk is the done chunk, which names the id that actually answered
+      if (chunk.model) model = chunk.model;
     }
     var message = { role: 'assistant', content: content };
     if (toolCalls) message.tool_calls = toolCalls;
     return {
       id: 'naklios-local',
       object: 'chat.completion',
-      model: capabilities.aiModel || 'localmind',
+      model: model || capabilities.aiModel || 'localmind',
       choices: [{
         index: 0,
         message: message,
@@ -1821,9 +1824,13 @@ textarea { resize: vertical; min-height: 80px; }
     if (inNakliOS && e.source !== window.parent) return;
     var msg = e.data;
     if (!msg || typeof msg !== 'object') return;
-    // Lock the trusted parent origin on the first naklios:* message, then verify
-    // every later message against it (no-referrer-safe; see the detection note).
-    if (inNakliOS && typeof msg.type === 'string' && msg.type.indexOf('naklios:') === 0) {
+    // Lock the trusted origin on the first naklios:* message, then verify every
+    // later message against it (no-referrer-safe; see the detection note). This
+    // runs standalone too: a bare/?naklios top-level tab has no window.parent to
+    // pin the source against, so learn-on-contact origin is the only check it can
+    // make — without it the handler would mutate capabilities and fire listeners
+    // for naklios:* messages from ANY origin (opener, child frame, injected page).
+    if (typeof msg.type === 'string' && msg.type.indexOf('naklios:') === 0) {
       if (!trustedParentOrigin) trustedParentOrigin = e.origin;
       else if (e.origin !== trustedParentOrigin) return;
     }
@@ -1900,7 +1907,11 @@ textarea { resize: vertical; min-height: 80px; }
         aiRequest.deliver({
           id: msg.requestId,
           object: 'chat.completion.chunk',
-          model: msg.model || capabilities.aiModel || 'localmind',
+          // Who answered, where the OpenAI shape puts it. The host's fallback ladder can
+          // answer from an id other than the configured one; the done chunk is the only
+          // frame that knows, so it names the responder and the token chunks keep the
+          // configured entry.
+          model: msg.answeredModel || msg.model || capabilities.aiModel || 'localmind',
           choices: [{
             index: 0,
             delta: msg.toolCalls && msg.toolCalls.length ? { tool_calls: msg.toolCalls } : {},
@@ -1985,7 +1996,7 @@ textarea { resize: vertical; min-height: 80px; }
   });
 
   window.naklios = {
-    version: 1,
+    version: 2,
     capabilities: capabilities,   // mutated in place; read fields directly
     ready: function () {
       send('naklios:ready', {
