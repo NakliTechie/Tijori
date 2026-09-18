@@ -12,13 +12,13 @@ const region = html.slice(
   html.indexOf('// ── qr-transport:pure end'),
 );
 assert.ok(region.length > 0, 'pure region markers present');
-const qrcodegenSrc = html.split('\n').find(l => l.startsWith('var qrcodegen='));
-assert.ok(qrcodegenSrc, 'vendored qrcodegen present');
+const qrcodegenSrc = html.slice(html.indexOf('var qrcodegen;'), html.indexOf('// ── qr-transport:pure begin'));
+assert.ok(qrcodegenSrc.length > 10000, 'vendored qrcodegen present');
 
 const t = new Function(qrcodegenSrc + ';' + region + `
   ;return { b45e, b45d, qrParseFrame, qrFountainIndices, qrFountainFrame, qrFountainNextSeq, QrFountainDecoder,
-            QR_CHUNK_MAX, QR_HEADER_LEN, QR_ALNUM_MAX, QR_SEQ_MOD, qrcodegen };`)();
-const { QrCode } = t.qrcodegen;
+            QR_CHUNK_MAX, QR_HEADER_LEN, QR_ALNUM_MAX, QR_SEQ_MOD, QR_WORKER_SRC, qrcodegen };`)();
+const { QrCode, QrSegment } = t.qrcodegen;
 
 // ── base45: RFC 9285 vectors, then random round-trips ──
 const enc = s => t.b45e(new TextEncoder().encode(s));
@@ -45,7 +45,7 @@ const bytes = new Uint8Array(archive);
 const tagFor = b => { const h = createHash('sha256').update(b).digest(); return t.b45e(h.subarray(0, 2)) + t.b45e(h.subarray(2, 4)).slice(0, 1); };
 const TAG = tagFor(bytes);
 assert.equal(TAG.length, 4);
-const alnum = QrCode.Mode.ALPHANUMERIC;
+const alnum = QrSegment.Mode.ALPHANUMERIC;
 
 // a decoder fed frames in `order` (array of seqs); returns frames consumed to finish
 function run(chunk, order) {
@@ -75,7 +75,7 @@ for (const chunk of [450, 900, 1800, 2840, t.QR_CHUNK_MAX]) {
     const f = t.qrFountainFrame(bytes, chunk, TAG, seq);
     assert.match(f.slice(0, t.QR_HEADER_LEN), /^TJ3\d{4}\d{7}\d{5}[0-9A-Z $%*+\-./:]{4}$/);
     assert.ok(f.length <= t.QR_ALNUM_MAX, `fits the alphanumeric ceiling at ${chunk}: ${f.length}`);
-    const segs = QrCode.makeSegments(f);
+    const segs = QrSegment.makeSegments(f);
     assert.equal(segs.length, 1); assert.equal(segs[0].mode, alnum, 'single alphanumeric segment');
     maxVersion = Math.max(maxVersion, QrCode.encodeText(f, QrCode.Ecc.LOW).version);
   }
@@ -140,6 +140,11 @@ assert.equal(t.qrFountainNextSeq(6, 7), 7);
   assert.ok(p2 && p2.proto === 'TJ2' && p2.total === 3 && p2.idx === 1);
   assert.equal(Buffer.from(p2.bytes).toString(), 'hello, TJ2');
 }
+
+// ── decode worker source parses, and the page's CSP lets a blob worker start ──
+new Function(t.QR_WORKER_SRC);
+assert.match(t.QR_WORKER_SRC, /bitmap\.close\(\)/, 'worker releases every bitmap');
+assert.match(html, /worker-src blob:/, 'CSP must allow the blob-URL decode worker');
 
 // ── TJ1 (legacy sender) still parses ──
 const tj1 = 'TJ1|3|1|' + Buffer.from('hello, legacy').toString('base64');

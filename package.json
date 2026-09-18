@@ -1,0 +1,12 @@
+{
+  "name": "tijori-checks",
+  "private": true,
+  "description": "Dev-only: the app is index.html and has no build. These are the CI checks and their one decoder dependency.",
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/test-naklios-storage.mjs && node scripts/make-test-vault.mjs --check && node scripts/test-qr-transport.mjs && node scripts/test-qr-render.mjs"
+  },
+  "devDependencies": {
+    "jsqr": "^1.4.0"
+  }
+}

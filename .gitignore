@@ -9,6 +9,9 @@
 !scripts/**
 !.github/
 !.github/**
+# dev-only checks and their one decoder dependency (node_modules stays ignored)
+!package.json
+!package-lock.json
 
 # wrangler files
 .wrangler
