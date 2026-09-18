@@ -14,26 +14,15 @@ Optional hardware-key second factor via WebAuthn PRF.
 
 ## What it does
 
-- Stores **Login**, **Card**, **Note**, and **TOTP Code** entries
-- **NakliOS storage bridge** — the same encrypted vault format can live under
-  Tijori's app-scoped namespace in a connected NakliOS Folder or Crate backend.
-  Standalone File System Access and OPFS behavior is unchanged.
-- **Optional hardware-key second factor** — bind any FIDO2 / WebAuthn authenticator (YubiKey, Titan, Solo, Touch ID, iCloud passkey, Android passkey) via the PRF extension. Hardware-derived secret mixed into the key derivation; **both** master password and key required to unlock. Multiple keys per vault for backup-key safety.
-- **Argon2id key derivation** for new vaults (memory-hard, GPU-resistant). Existing PBKDF2 vaults migrate on next save; both formats remain readable.
-- **Multi-vault picker** on the welcome screen — keep personal / work / family vaults side-by-side; one click each. Set a default to auto-open on launch.
-- **Local vault audit** — flags reused or weak passwords, missing 2FA, aging entries, orphan TOTPs, and other hygiene issues. Computed in memory, no HIBP, no network.
-- **Export to KeePass (.kdbx)** — full-fidelity KDBX4 export readable by KeePassXC, KeePassium, Strongbox, KeePassDX, KeeWeb, and any other KeePass-compatible client. Use Tijori as the desktop editor, KeePass apps as mobile read clients.
-- **Export to CSV** (Bitwarden-compatible) for migration into Bitwarden / 1Password / Apple Passwords / Dashlane / NordPass / etc.
-- Every entry is individually encrypted: AES-256-GCM with a random 12-byte nonce
-- Vault format is an **append-only event log** — one `.jsonl` file per device, SHA-256 hash-chained
-- **Air-gapped sync via QR flash** — beam the encrypted vault to another device as a stream of animated QR codes. No cable, no Wi-Fi, no cloud, no account. Works for both **first-time bootstrap** (empty receiving vault) and **ongoing updates** (existing vault merges new events only — dedupes by `device_id:seq`)
-- **Multi-device sync** by any file transport: cloud folder, Syncthing, Git, USB, encrypted archive, or QR flash — same deterministic merge, same file format
-- Per-field last-writer-wins merge — deterministic, no conflicts, works with events arriving out of order
-- Device revocation (soft — skips future events from the revoked device on merge)
-- Built-in TOTP engine (RFC 6238): SHA-1/256/512, 6/7/8 digits, 30s/60s, countdown rings, next-code preview
-- Import from Bitwarden, Chrome/Edge CSV, 1Password CSV, generic CSV, or `otpauth://` URIs
-- Clipboard auto-clears, idle lock, lock-on-tab-hide
-- Password generator + entropy estimator
+- **Login, Card, Note, TOTP** entries; built-in RFC 6238/4226 engine (SHA-1/256/512, 6–8 digits, HOTP counters)
+- **Attachments** (v1.4) — recovery sheets, scanned IDs, SSH keys on any entry; each file encrypted with its own derived key, previewed in memory, up to 50 MB
+- **Argon2id** key derivation; **optional hardware-key second factor** (any FIDO2 / WebAuthn authenticator via PRF, multiple keys per vault)
+- Vault is an **append-only, hash-chained event log**, one `.jsonl` per device; per-field last-writer-wins merge — deterministic, conflict-free, order-independent
+- **Sync by any file transport** (cloud folder, Syncthing, Git, USB), by **QR flash** (fountain-coded, air-gapped), or **directly over LAN / hotspot** (WebRTC, host candidates only). Same archive bootstraps an empty device or updates an existing one
+- **NakliOS storage** — the same vault format under an app-scoped Folder or encrypted Crate backend; standalone FSA / OPFS unchanged
+- **Multi-vault picker**, **local vault audit** (reused / weak / aging / missing-2FA, no network), device revocation
+- **Export** to KeePass `.kdbx` (full fidelity, attachments included) or Bitwarden-style CSV; **import** from Bitwarden, Chrome/Edge, 1Password, generic CSV, `otpauth://`
+- Clipboard auto-clear, idle lock, lock-on-hide, brute-force backoff, password generator + entropy meter
 
 ## Hardware key support
 
@@ -117,12 +106,12 @@ Your vault is yours. Three ways to leave Tijori without losing data:
 | Hash chain | SHA-256 over previous raw event-line string; `genesis` for first |
 | Merge | Union all device streams, sort by `(ts, device_id)`, per-field last-writer-wins |
 | TOTP | RFC 6238 — WebCrypto `HMAC-SHA-{1,256,512}`, base32 inline (~25 lines) |
-| Attachments | v1.4. `tijori-attachments/<id>.bin` = nonce ‖ AES-256-GCM, key `HKDF(master_secret, "tijori-v2", "attachment-key:<id>")`, AAD = id. Filename / MIME / size / ciphertext SHA-256 travel only in the encrypted `attachment_added` event; `attachment_removed` is a tombstone that is never re-added. Blob is written before its event. A record whose blob is absent is a normal *pending* state (the QR sequence carries blobs up to 64 KB and withholds larger ones, saying so on the sender; LAN, folder sync and `.tijori` archives carry everything). GC is user-run and deletes only tombstoned / deleted-entry blobs — never an unreferenced one, because a cloud folder can deliver a blob before the `.jsonl` that names it. Soft cap 10 MB, hard cap 50 MB. v2 vaults only. Previews (text, image, PDF) decrypt into memory for the life of the modal; KDBX export carries present attachments as binaries; CSV export warns that it cannot. |
+| Attachments | One opaque file per attachment: `tijori-attachments/<id>.bin` = nonce ‖ AES-256-GCM, key `HKDF(master_secret, "tijori-v2", "attachment-key:<id>")`, AAD = id. Name / type / size / ciphertext SHA-256 live only in the encrypted `attachment_added` event; removal is a tombstone. A missing blob is a normal *pending* state. User-run GC deletes only tombstoned or deleted-entry blobs. v2 vaults only. |
 | Storage | Standalone: `FileSystemDirectoryHandle` on desktop, OPFS fallback on iOS/mobile. Hosted: app-scoped `naklios.fs` over a user-selected NakliOS Folder or encrypted Crate backend. |
 | Reconnect | FSA handle persisted in IndexedDB (permission re-requested on next visit); OPFS vault name persisted (reconnects silently) |
-| QR flash | Archive sent as `TJ3` frames — a systematic LT fountain code over K blocks: the first K frames are the blocks themselves, every frame after is an XOR of blocks chosen by a PRNG seeded from the frame number, so a missed frame costs one more frame rather than a lap. Header `TJ3` + chunk + length + seq + 4-char SHA tag; payload base45 (RFC 9285), so each frame is one QR alphanumeric segment at EC-L. Frame size is selectable on the sender (450 B → 2.84 KB / v40). Nayuki qrcodegen inlined, receiver via `BarcodeDetector` with a peeling decoder; older `TJ2` and `TJ1` carousel senders are still accepted. |
-| LAN / hotspot | WebRTC DataChannel with `iceServers: []` — host candidates only, no STUN, no TURN, no relay, no signaling server. The offer and answer each travel as ONE static QR (`TL1` + base45 JSON of ufrag/pwd/DTLS fingerprint/host candidates, ~400 chars → v12). The DTLS fingerprint in that QR is what authenticates the peer; a 6-digit pairing code in the offer is HMAC-checked over both fingerprints before a byte moves. After connect, `getStats()` must show a host↔host candidate pair or the transfer is refused ("non-local path: host ↔ prflx"). ICE failure fails closed to the QR sequence — never to a third party. |
-| Dependencies | **Zero** (runtime). `jsqr` is a dev-only dependency for the CI render check. |
+| QR flash | `TJ3` frames: a systematic LT fountain code — the K blocks in order, then endless PRNG-mixed repair frames, so a missed frame costs one frame, not a lap. Header + base45 payload (RFC 9285) = one alphanumeric segment at EC-L; frame size selectable up to v40. Blobs up to 64 KB ride along; larger ones are withheld and named. Nayuki qrcodegen inlined; receiver decodes in a worker via `BarcodeDetector`. `TJ2` / `TJ1` senders still accepted. |
+| LAN / hotspot | WebRTC DataChannel, `iceServers: []`, host candidates only — no STUN, TURN, relay or signaling server. Offer and answer each travel as one static QR (`TL1`); the DTLS fingerprint in it authenticates the peer, a 6-digit code is HMAC-checked over both fingerprints before any data. After connect `getStats()` must show host↔host or both sides refuse. Carries every blob. Fails closed to QR, never to a third party. |
+| Dependencies | **Zero** at runtime. `jsqr` is dev-only, for the CI render check. |
 | Build step | **None** |
 
 ## Vault format
@@ -131,6 +120,7 @@ Your vault is yours. Three ways to leave Tijori without losing data:
 vault-folder/
   tijori-meta.json                   — plaintext: KDF params, device roster
   tijori-events-<deviceId>.jsonl     — one per device, append-only, hash-chained
+  tijori-attachments/<id>.bin        — v1.4: one opaque encrypted file per attachment
 ```
 
 Each event line:
@@ -149,7 +139,7 @@ Each event line:
 
 `payload_ct` is AES-256-GCM ciphertext of the entry payload (JSON). `prev_hash` is SHA-256 of the preceding raw line string. Tampering any byte breaks the chain — verifiable from **Settings → Vault → Verify log integrity**.
 
-Event types: `device_registered`, `device_revoked`, `entry_created`, `entry_updated`, `entry_deleted`.
+Event types: `device_registered`, `device_revoked`, `entry_created`, `entry_updated`, `entry_deleted`, `attachment_added`, `attachment_removed`, plus key-binding and format-upgrade events. A build that meets an event type it does not know skips it and says how many it skipped.
 
 ## Usage
 
@@ -167,23 +157,13 @@ Event types: `device_registered`, `device_revoked`, `entry_created`, `entry_upda
 
 Each device writes only its own `.jsonl` file. Sync is whatever moves files between devices — Tijori never implements a sync protocol, it just merges what it finds. On import, events are deduped by `(device_id, seq)` and appended, so **the same archive is both a full bootstrap and an incremental update**: an empty vault receives everything, an existing vault receives only what it's missing.
 
-### Air-gapped sync — QR flash
+### QR flash — air-gapped
 
-The transport worth calling out: **Settings → Data → Send vault via QR**. Tijori builds the full encrypted archive in memory, splits it into blocks (pick the frame size on the sender — bigger moves more per flash, smaller is easier for a shaky camera), and streams fountain-coded QR frames: the blocks once in order, then endless repair frames that each mix a few blocks. The receiver can start at any point and never waits for a loop to come round. On the receiving device (Import → QR sequence), the camera picks up frames with `BarcodeDetector`, and a grid of dots fills in as each chunk arrives. Out-of-order and duplicate frames are normal — the receiver waits for all indices, reassembles, decrypts, and merges.
+**Settings → Data → Send vault via QR** on the source, **Import → QR sequence** on the receiver. The sender streams fountain-coded frames (pick a frame size: bigger moves more per flash, smaller suits a shaky camera); the receiver can start at any point and never waits for a loop. Two phones in airplane mode can bootstrap or update each other. Files up to 64 KB ride along; larger ones arrive as *not on this device* until a file-carrying transport runs. Needs `BarcodeDetector` (Chrome, Safari 17+).
 
-Use it for:
+### LAN / hotspot — direct
 
-- **First-time bootstrap** — pair a fresh device with no other infrastructure. Two phones in airplane mode can sync.
-- **Periodic updates** — after changes on device A, re-send. Device B's existing events are deduped; only the new ones are appended.
-- **Air-gapped environments** — no cloud vendor, no P2P software, no cables. Just two screens and a camera.
-
-Supported where `BarcodeDetector` is available (Chrome, Safari 17+).
-
-### LAN / hotspot — direct device-to-device
-
-**Settings → Data → Send vault over LAN / hotspot** on the source; **Import → LAN / hotspot** on the receiver. Both devices on the same wifi, or one on the other's hotspot (a hotspot is your own infrastructure, so the sovereignty posture holds without a shared network). The sender shows one static QR; the receiver scans it and shows one reply QR; the sender scans that. Then the encrypted archive moves over a WebRTC DataChannel at LAN speed — this is the transport for anything bigger than a few hundred KB.
-
-What it never does: no STUN, no TURN, no relay, no signaling server. The peer connection is created with no ICE servers, only host candidates are exchanged, and after connecting Tijori checks the live candidate pair and refuses anything that is not host↔host. If the two devices cannot reach each other directly, it says so and points you at the QR sequence — it does not fall back to a third party.
+**Settings → Data → Send vault over LAN / hotspot**, **Import → LAN / hotspot**. Same wifi, or one device on the other's hotspot. One static QR each way to exchange the handshake, then the archive — attachments included — moves over a WebRTC DataChannel at LAN speed. No STUN, TURN, relay or signaling server; the live path must be host↔host or the transfer is refused; if the devices cannot reach each other it says so and points at QR.
 
 ### Other transports
 
@@ -192,7 +172,7 @@ What it never does: no STUN, no TURN, no relay, no signaling server. The peer co
 | Cloud folder (iCloud Drive / Dropbox / Google Drive) | Easiest for continuous multi-device use. Each device's browser points at its local copy. |
 | Syncthing | P2P, no cloud vendor. |
 | Git | Each device's log is a separate file — `git merge` never produces conflicts on event logs. |
-| USB / manual | Export encrypted archive, import on other device. Same `.tijori` file, same dedup-on-import semantics as QR. |
+| USB / manual | Export the encrypted `.tijori` archive (attachments included), import on the other device. Same dedup-on-import semantics as QR and LAN. |
 
 ## Vault folder — what's safe to do
 
@@ -232,8 +212,6 @@ Why both exist: TOTP is a second factor. Combining it with passwords under one m
 - **Mobile / iOS** — Safari 16.4+, Chrome on iOS. Vault lives in the browser's Origin Private File System (OPFS) instead of a user-visible folder. Export regularly to a desktop vault or via QR flash.
 
 ## Verifying what you're running
-
-[#verifying-what-youre-running](#verifying-what-youre-running)
 
 Every release publishes:
 
