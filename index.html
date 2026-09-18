@@ -562,6 +562,7 @@ textarea { resize: vertical; min-height: 80px; }
 .camera-corner.br { bottom:10px; right:10px; border-bottom-width:3px; border-right-width:3px; border-radius:0 0 4px 0; }
 .qr-recv-status { font-size:13px; color:var(--muted); text-align:center; margin-top:10px; min-height:20px; }
 .qr-recv-status .hit { color:var(--ok); font-weight:700; }
+.qr-bench { font-family:var(--mono, ui-monospace, monospace); font-size:11px; font-variant-numeric:tabular-nums; }
 .qr-frame-dots { display:flex; flex-wrap:wrap; gap:3px; margin-top:6px; justify-content:center; max-height:60px; overflow:hidden; }
 .qr-frame-dot { width:7px; height:7px; border-radius:50%; background:var(--border); transition:background .15s; }
 .qr-frame-dot.got { background:var(--ok); }
@@ -1115,6 +1116,7 @@ textarea { resize: vertical; min-height: 80px; }
       </div>
       <div class="qr-recv-status" id="qr-recv-status">Starting camera…</div>
       <div class="qr-frame-dots" id="qr-frame-dots"></div>
+      <div class="qr-recv-status qr-bench" id="qr-bench" hidden></div>
     </div>
 
     <!-- otpauth URI paste area -->
@@ -6622,6 +6624,30 @@ const QR_CHUNK = 450; // raw bytes per frame → ~600 b64 chars → QR v15–20
 let _qrFrames = [], _qrIdx = 0, _qrTimer = null, _qrSpeed = 700;
 let _qrRecvChunks = {}, _qrRecvTotal = 0, _qrScanTimer = null, _qrStream = null;
 
+// Transport benchmark readout (Chunk 2 of plan/workplan.md). Dev-only: enable
+// with localStorage['tijori.qrbench'] = '1'. Counts what the receiver actually
+// gets — unique payload bytes, valid TJ1 decodes (incl. repeats), detect() calls
+// — against wall-clock from the first decoded frame. The three rates answer
+// three different questions: KB/s is throughput, decoded fps is the camera +
+// decoder ceiling, detect/s is the scan-loop ceiling (150 ms interval ⇒ ≤6.7).
+let _qrBench = null;
+function _qrBenchOn() { try { return localStorage.getItem('tijori.qrbench') === '1'; } catch { return false; } }
+function _qrBenchReset() {
+  _qrBench = _qrBenchOn() ? { t0: 0, detects: 0, decodes: 0, unique: 0, bytes: 0, total: 0 } : null;
+  const el = $('qr-bench'); if (el) { el.hidden = !_qrBench; el.textContent = _qrBench ? 'bench: waiting for first frame' : ''; }
+}
+function _qrBenchStats() {
+  const b = _qrBench, secs = Math.max(0.001, (performance.now() - b.t0) / 1000);
+  return { elapsed_s: +secs.toFixed(2), frames: `${b.unique}/${b.total}`, bytes: b.bytes,
+    kb_per_s: +(b.bytes / 1024 / secs).toFixed(2), decoded_fps: +(b.decodes / secs).toFixed(2),
+    detect_per_s: +(b.detects / secs).toFixed(2), emit_interval_ms: null };
+}
+function _qrBenchPaint() {
+  const el = $('qr-bench'); if (!el || !_qrBench || !_qrBench.t0) return;
+  const st = _qrBenchStats();
+  el.textContent = `bench ${st.elapsed_s}s · ${st.frames} frames · ${(st.bytes / 1024).toFixed(1)} KB · ${st.kb_per_s} KB/s · ${st.decoded_fps} decoded fps · ${st.detect_per_s} detect/s`;
+}
+
 async function showQrSend() {
   if (!S.key || !S.dirHandle) { toast('Unlock a vault first.', { error: true }); return; }
   showModal('modal-qr-send');
@@ -6685,7 +6711,7 @@ function closeQrSend() {
 }
 
 async function startQrReceive() {
-  _qrRecvChunks = {}; _qrRecvTotal = 0;
+  _qrRecvChunks = {}; _qrRecvTotal = 0; _qrBenchReset();
   const statusEl = $('qr-recv-status'), dotsEl = $('qr-frame-dots');
   if (!statusEl) return;
   if (typeof BarcodeDetector === 'undefined') {
@@ -6703,6 +6729,7 @@ async function startQrReceive() {
     _qrScanTimer = setInterval(async () => {
       if (!video.readyState || video.readyState < 2) return;
       try {
+        if (_qrBench && _qrBench.t0) _qrBench.detects++;
         const codes = await detector.detect(video);
         for (const c of codes) _processQrFrame(c.rawValue);
       } catch {}
@@ -6718,14 +6745,16 @@ function _processQrFrame(raw) {
   if (parts.length < 4) return;
   const total = parseInt(parts[1]), idx = parseInt(parts[2]), data = parts.slice(3).join('|');
   if (isNaN(total) || isNaN(idx) || idx < 0 || idx >= total) return;
+  if (_qrBench) { if (!_qrBench.t0) _qrBench.t0 = performance.now(); _qrBench.decodes++; _qrBench.total = total; }
   if (!_qrRecvTotal) {
     _qrRecvTotal = total;
     // build dot indicators
     const dotsEl = $('qr-frame-dots');
     if (dotsEl) { dotsEl.innerHTML = Array.from({ length: total }, (_, i) => `<div class="qr-frame-dot" id="qrdot-${i}"></div>`).join(''); }
   }
-  if (_qrRecvChunks[idx] !== undefined) return;
+  if (_qrRecvChunks[idx] !== undefined) { _qrBenchPaint(); return; }
   _qrRecvChunks[idx] = data;
+  if (_qrBench) { _qrBench.unique++; _qrBench.bytes += Math.floor(data.length * 3 / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0); _qrBenchPaint(); }
   const dot = $(`qrdot-${idx}`); if (dot) dot.classList.add('got');
   const got = Object.keys(_qrRecvChunks).length;
   const statusEl = $('qr-recv-status');
@@ -6738,6 +6767,7 @@ async function _finishQrReceive(total) {
   if (_qrStream) { _qrStream.getTracks().forEach(t => t.stop()); _qrStream = null; }
   const statusEl = $('qr-recv-status');
   if (statusEl) statusEl.textContent = 'Decoding vault…';
+  if (_qrBench && _qrBench.t0) { _qrBenchPaint(); console.log('Tijori QR bench: ' + JSON.stringify({ transport: 'TJ1', chunk: QR_CHUNK, ecc: 'M', ..._qrBenchStats() })); }
   try {
     const b64 = Array.from({ length: total }, (_, i) => _qrRecvChunks[i]).join('');
     const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));

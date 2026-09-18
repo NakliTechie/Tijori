@@ -11,8 +11,12 @@ const app = scripts.at(-1);
 new Function(sdk);
 new Function(app);
 
+// The vendored SDK between the naklios-sdk markers is canonical upstream text
+// (its header spells the repo `nakliOS`); the splicer rewrites it on every
+// refresh, so only Tijori's own text is held to the product spelling.
+const ownHtml = html.replace(/\/\* naklios-sdk:begin[\s\S]*?\/\* naklios-sdk:end \*\//, '');
 assert.doesNotMatch(
-  html,
+  ownHtml,
   /\b(?:naklOS|nakliOS|Naklios)\b/,
   'Tijori must use the NakliOS product spelling',
 );
@@ -48,6 +52,10 @@ assert.match(importBody, /for \(const name of copied\.reverse\(\)\)/,
 
 let messageListener;
 const sent = [];
+const HOST_ORIGIN = 'https://naklios.dev';
+// SDK v2 drops any message whose source is not window.parent and pins the
+// origin on first contact, so every synthetic host message carries both.
+const fromHost = data => messageListener({ data, source: childWindow.parent, origin: HOST_ORIGIN });
 const childWindow = {
   parent: { postMessage(message) { sent.push(message); } },
   addEventListener(type, callback) {
@@ -72,15 +80,17 @@ assert.equal(sent.at(-1).type, 'naklios:capabilities-request');
 
 let observedFs = false;
 childWindow.naklios.onCapabilitiesChange(caps => { observedFs = caps.fs; });
-messageListener({
-  data: {
+fromHost({
     type: 'naklios:capabilities',
     fs: true,
     fsBackends: [{ id: 'crate', label: 'Crate', name: 'vault-bucket' }],
     fsBackend: null,
-  },
-});
+  });
 assert.equal(observedFs, true);
+messageListener({ data: { type: 'naklios:capabilities', fs: false }, source: {}, origin: HOST_ORIGIN });
+assert.equal(childWindow.naklios.capabilities.fs, true, 'a message not from window.parent must be ignored');
+messageListener({ data: { type: 'naklios:capabilities', fs: false }, source: childWindow.parent, origin: 'https://evil.example' });
+assert.equal(childWindow.naklios.capabilities.fs, true, 'a message from an unpinned origin must be ignored');
 assert.equal(childWindow.naklios.capabilities.fsBackends[0].id, 'crate');
 assert.equal(childWindow.naklios.capabilities.fsBackend, null);
 
@@ -88,18 +98,14 @@ const selectPromise = childWindow.naklios.fs.useBackend('crate');
 const selectRequest = sent.at(-1);
 assert.equal(selectRequest.type, 'naklios:fs:selectBackend');
 assert.equal(selectRequest.backend, 'crate');
-messageListener({
-  data: { type: 'naklios:fs:reply', requestId: selectRequest.requestId, result: true },
-});
+fromHost({ type: 'naklios:fs:reply', requestId: selectRequest.requestId, result: true });
 assert.equal(await selectPromise, true);
 
 const writePromise = childWindow.naklios.fs.write('vault.json', '{}');
 const request = sent.at(-1);
 assert.equal(request.type, 'naklios:fs:write');
 assert.equal(request.path, 'vault.json');
-messageListener({
-  data: { type: 'naklios:fs:reply', requestId: request.requestId, result: null },
-});
+fromHost({ type: 'naklios:fs:reply', requestId: request.requestId, result: null });
 await writePromise;
 
 console.log('Tijori NakliOS storage contract: PASS');

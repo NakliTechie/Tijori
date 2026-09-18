@@ -17,3 +17,4 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/test-naklios-storage.mjs
+      - run: node scripts/make-test-vault.mjs --check

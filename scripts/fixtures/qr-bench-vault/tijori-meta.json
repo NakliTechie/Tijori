@@ -1,0 +1,24 @@
+{
+  "format": "tijori-v2",
+  "vault_format_version": 2,
+  "kdf": {
+    "algorithm": "argon2id",
+    "memory_kib": 65536,
+    "iterations": 3,
+    "parallelism": 4,
+    "salt_kdf": "mUaHa9J0hOFDMAEgMpykqhUEf3iH+bBhGIVWZAlITUc="
+  },
+  "device_roster": [
+    {
+      "id": "2c018319-96bd-489a-a7b7-7a9ee771503b",
+      "label": "qr-bench",
+      "registered_at": "2026-09-18T09:00:00.000Z"
+    }
+  ],
+  "bound_keys": [],
+  "pw_wrap": {
+    "enabled": true,
+    "wrapped_master": "hn5vZAwwJuWU9oAJoZ0GATALLtqkjXN+geupMJGyJCU2LrPiZIYT4Dbhp7Fxp7sQ",
+    "wrap_nonce": "kmdYujveRHuhfx/d"
+  }
+}
