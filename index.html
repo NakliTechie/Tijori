@@ -565,6 +565,16 @@ textarea { resize: vertical; min-height: 80px; }
 .camera-corner.br { bottom:10px; right:10px; border-bottom-width:3px; border-right-width:3px; border-radius:0 0 4px 0; }
 .qr-recv-status { font-size:13px; color:var(--muted); text-align:center; margin-top:10px; min-height:20px; }
 .qr-recv-status .hit { color:var(--ok); font-weight:700; }
+.att-section { margin-top:4px; }
+.entry-att { font-size:11px; color:var(--muted); margin-left:4px; }
+.att-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.att-head label { font-size:13px; color:var(--muted); }
+.att-list { display:flex; flex-direction:column; gap:4px; }
+.att-row { display:flex; align-items:center; gap:8px; padding:7px 10px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; font-size:13px; }
+.att-row .att-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.att-row .att-size { color:var(--muted); font-size:11px; font-family:var(--mono); white-space:nowrap; }
+.att-row .att-pending { color:var(--warn); font-size:11px; white-space:nowrap; }
+.att-row .btn-icon { padding:4px 8px; font-size:13px; }
 .lan-canvas { background:#fff; border-radius:8px; image-rendering:pixelated; width:min(100%, 260px); height:auto; aspect-ratio:1; display:inline-block; }
 .lan-progress { height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin-top:8px; }
 .lan-progress-bar { height:100%; width:0; background:var(--ok); transition:width .1s; }
@@ -924,6 +934,16 @@ textarea { resize: vertical; min-height: 80px; }
       </div>
     </div>
 
+    <div id="entry-attachments" class="att-section" hidden>
+      <div class="att-head">
+        <label>Attachments <span style="color:var(--muted);font-weight:400" id="att-count"></span></label>
+        <button class="btn ghost btn-sm" type="button" id="att-add-btn" onclick="$('att-file').click()">+ Add file</button>
+        <input type="file" id="att-file" multiple hidden onchange="handleAttachFiles(this.files); this.value='';">
+      </div>
+      <div id="att-list" class="att-list"></div>
+      <div class="hint" id="att-hint"></div>
+    </div>
+
     <hr class="sep">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <button class="btn danger btn-sm" id="entry-delete-btn" style="display:none" onclick="deleteCurrentEntry()">Delete</button>
@@ -963,6 +983,7 @@ textarea { resize: vertical; min-height: 80px; }
       </p>
       <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="handleIntegrityCheck()">Verify log integrity</button>
       <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="handleVaultAudit()">Run vault audit</button>
+      <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="handleAttachmentGc()">Garbage-collect attachments</button>
     </div>
 
     <!-- Devices tab -->
@@ -1466,6 +1487,8 @@ textarea { resize: vertical; min-height: 80px; }
       <h4>Multiple vaults</h4>
       <p>You can keep more than one vault — personal / work / family. The welcome screen lists all vaults Tijori knows about. Use the <strong>⋯</strong> menu next to a row to rename it, set it as the default (opens automatically on launch), or forget it (removes from the list without touching the files on disk).</p>
       <p>Click <strong>Open vault</strong> to add an existing vault from another folder; it'll be added to the list automatically.</p>
+      <h4>Attachments</h4>
+      <p>Open a saved entry and use <strong>+ Add file</strong> to attach recovery-code sheets, scanned IDs, SSH keys, seed cards — anything up to 50 MB (10 MB and above asks first). Each file is encrypted with its own key derived from the vault's master secret and stored as an opaque file under <code>tijori-attachments/</code>; the name, type and size live only in the encrypted event log. Files follow the vault through folder sync, the LAN transport and <code>.tijori</code> archives. The QR sequence carries the entry but never the file — it shows as <em>not on this device</em> until a file-carrying sync runs. Removing an attachment records a tombstone; the encrypted bytes stay until <em>Settings → Vault → Garbage-collect attachments</em>, which only ever deletes files whose record is removed or whose entry is deleted. Needs a v2 vault.</p>
       <h4>Vault audit</h4>
       <p><em>Settings → Vault → Run vault audit</em> checks for reused or weak passwords, missing 2FA, aging entries, and other hygiene issues. Everything is computed in memory and never sent anywhere — there is no breach-check service.</p>
       <h4>Keyboard shortcuts</h4>
@@ -2861,6 +2884,8 @@ async function loadAndMerge() {
   // Deterministic order: (ts, device_id)
   allEvents.sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 :
     a.device_id < b.device_id ? -1 : a.device_id > b.device_id ? 1 : 0);
+  const attachments = new Map();
+  let unknownEvents = 0;
 
   // First pass: collect revocations
   const revocations = {}; // deviceId → revoked_at ISO
@@ -2883,6 +2908,10 @@ async function loadAndMerge() {
     let p;
     try { p = await decryptPayload(_keyForEvent(ev), ev.payload_ct, ev.nonce); } catch { continue; }
 
+    if (ev.event_type === 'attachment_added' || ev.event_type === 'attachment_removed') {
+      attApplyEvent(attachments, ev.event_type, p, ev.ts);
+      continue;
+    }
     if (ev.event_type === 'entry_created') {
       if (!entries.has(p.id)) {
         entries.set(p.id, { id: p.id, type: p.type, deleted: false, deleted_at: null, fields: p.fields });
@@ -2906,6 +2935,8 @@ async function loadAndMerge() {
       if (ex && (!ex.deleted_at || p.deleted_at > ex.deleted_at)) {
         ex.deleted = true; ex.deleted_at = p.deleted_at;
       }
+    } else if (!KNOWN_EVENT_TYPES.has(ev.event_type)) {
+      unknownEvents++;
     }
   }
 
@@ -2913,7 +2944,19 @@ async function loadAndMerge() {
   for (const [id, e] of entries) {
     if (!e.deleted) S.entries.set(id, e);
   }
+  // Every attachment record ever seen (tombstoned and orphaned ones included —
+  // GC needs them); entries carry only their live ones.
+  S.attachments = attachments;
+  for (const a of attachments.values()) {
+    const e = S.entries.get(a.entry_id);
+    if (e && !a.removed_at) (e.attachments ??= new Map()).set(a.attachment_id, a);
+  }
+  if (unknownEvents && !S._warnedUnknown) {
+    S._warnedUnknown = true;
+    toast(`${unknownEvents} event${unknownEvents > 1 ? 's' : ''} from a newer Tijori were ignored — update this build to see everything.`, { dur: 5000 });
+  }
 }
+const KNOWN_EVENT_TYPES = new Set(['device_registered', 'device_revoked', 'user_removed', 'entry_created', 'entry_updated', 'entry_deleted', 'attachment_added', 'attachment_removed', 'key_bound', 'key_unbound', 'password_changed', 'vault_format_upgraded']);
 
 // ══════════════════════════════════════════════════════════
 // INTEGRITY CHECK
@@ -3746,7 +3789,7 @@ async function registerDevice(dirHandle, password, deviceId, deviceLabel) {
 
 function lock() {
   stopCodesTicker();
-  S.key = null; S.salt = null; S.entries = new Map();
+  S.key = null; S.salt = null; S.entries = new Map(); S.attachments = null;
   // Wipe v2-specific in-memory secrets. All are sensitive material.
   S.legacy_key = null;
   if (S.master_secret) { S.master_secret.fill(0); }
@@ -4047,7 +4090,7 @@ function renderEntryList() {
     return `<div class="entry-item" onclick="openEntryModal('${e.id}')">
       <div class="entry-icon">${entryIcon(e.type)}</div>
       <div class="entry-info">
-        <div class="entry-title">${escHtml(title)}</div>
+        <div class="entry-title">${escHtml(title)}${e.attachments?.size ? ` <span class="entry-att" title="${e.attachments.size} attachment${e.attachments.size > 1 ? 's' : ''}">📎${e.attachments.size > 1 ? e.attachments.size : ''}</span>` : ''}</div>
         ${sub ? `<div class="entry-sub">${escHtml(sub)}</div>` : ''}
       </div>
       ${hasCopy ? `<button class="copy-btn" title="Copy" onclick="copyEntryField('${e.id}','${copyField}',event)">⎘</button>` : ''}
@@ -4113,6 +4156,7 @@ function openEntryModal(id) {
 
   $('modal-entry-title').textContent = entry ? 'Edit entry' : 'New entry';
   $('entry-delete-btn').style.display = entry ? '' : 'none';
+  renderAttachments(entry ? id : null);
 
   if (entry) {
     if (type === 'login') {
@@ -4812,8 +4856,11 @@ async function exportEncryptedArchive() {
     const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
     streams[deviceId] = (await readStream(S.dirHandle, deviceId)).join('\n');
   }
+  const blobs = await collectAttachmentBlobs();
+  const attachments = {}; for (const [id, b] of Object.entries(blobs)) attachments[id] = b64e(b);
   const blob = new Blob([JSON.stringify({
-    format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams
+    format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams,
+    ...(Object.keys(attachments).length ? { attachments } : {})
   }, null, 2)], { type: 'application/json' });
   downloadBlob(blob, `tijori-backup-${new Date().toISOString().slice(0, 10)}.tijori`);
   try { localStorage.setItem(_exportTsKey(), String(Date.now())); } catch {}
@@ -5062,6 +5109,7 @@ async function importArchive(text) {
   }
 
   await loadAndMerge();
+  if (archive.attachments) { await importAttachmentBlobs(archive.attachments); }
 }
 
 function downloadBlob(blob, name) {
@@ -7593,15 +7641,23 @@ async function showQrSend() {
   _qrRebuildFrames();
 }
 
-// The encrypted archive every transport sends: meta + every event stream, verbatim.
-async function buildArchiveBytes() {
+// The encrypted archive a transport sends: meta + every event stream, verbatim,
+// plus attachment blobs when the transport can carry them (LAN yes, QR no —
+// a QR-synced entry shows its files as "not on this device" until a
+// blob-carrying transport runs).
+async function buildArchiveBytes({ withAttachments = false } = {}) {
   const streamNames = await getAllStreamNames(S.dirHandle);
   const streams = {};
   for (const name of streamNames) {
     const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
     streams[deviceId] = (await readStream(S.dirHandle, deviceId)).join('\n');
   }
-  return new TextEncoder().encode(JSON.stringify({ format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams }));
+  const archive = { format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams };
+  if (withAttachments) {
+    const blobs = await collectAttachmentBlobs();
+    if (Object.keys(blobs).length) { archive.attachments = {}; for (const [id, b] of Object.entries(blobs)) archive.attachments[id] = b64e(b); }
+  }
+  return new TextEncoder().encode(JSON.stringify(archive));
 }
 
 function _qrRebuildFrames() {
@@ -7822,6 +7878,200 @@ async function _finishQrReceive() {
 function stopQrReceive() { _qrStopDetect(); }
 
 // ══════════════════════════════════════════════════════════
+// ATTACHMENTS  (v1.4)
+// ══════════════════════════════════════════════════════════
+// ── attachments:pure begin ──────────────────────────────────
+// On disk: tijori-attachments/<attachment_id>.bin = nonce(12) || AES-256-GCM
+// ciphertext, key = HKDF(master_secret, "tijori-v2", "attachment-key:<id>"),
+// AAD = the id (a blob renamed to another id fails to open). The only file
+// name the folder reveals is the random id. Filename, MIME, size and the
+// ciphertext hash live in the encrypted `attachment_added` event, which is
+// what anchors the blob to the log. A record whose blob is not on this device
+// is `pending`: normal after a QR sync (QR never carries blobs); LAN, folder
+// and archive transports bring the bytes.
+const ATT_DIR = 'tijori-attachments';
+const ATT_SOFT_CAP = 10 * 1024 * 1024;   // warn
+const ATT_HARD_CAP = 50 * 1024 * 1024;   // refuse
+const ATT_NONCE_LEN = 12;
+function attKeyInfo(id) { return 'attachment-key:' + id; }
+function attPath(id) { return `${ATT_DIR}/${id}.bin`; }
+function attIsId(id) { return typeof id === 'string' && /^[0-9a-f]{32}$/.test(id); }
+function attFrame(nonce, ct) { const out = new Uint8Array(nonce.length + ct.length); out.set(nonce, 0); out.set(ct, nonce.length); return out; }
+function attUnframe(bytes) { if (!bytes || bytes.length <= ATT_NONCE_LEN + 16) throw new Error('attachment blob too short'); return { nonce: bytes.subarray(0, ATT_NONCE_LEN), ct: bytes.subarray(ATT_NONCE_LEN) }; }
+function attFmtSize(n) { return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`; }
+
+// Reducer over attachment events, in (ts, device) order. A record is keyed by
+// attachment_id; `removed_at` is a tombstone that never clears (removed is
+// never re-added). `added_at` keeps the earliest add so LWW cannot resurrect.
+function attApplyEvent(map, type, p, ts) {
+  if (!p || !attIsId(p.attachment_id) || typeof p.entry_id !== 'string') return;
+  let a = map.get(p.attachment_id);
+  if (type === 'attachment_added') {
+    if (typeof p.filename !== 'string' || !Number.isInteger(p.size) || p.size < 0 || typeof p.sha256_ct !== 'string') return;
+    if (!a) map.set(p.attachment_id, { attachment_id: p.attachment_id, entry_id: p.entry_id, filename: p.filename, mime: String(p.mime || ''), size: p.size, sha256_ct: p.sha256_ct, added_at: ts, removed_at: null });
+    return;
+  }
+  if (type === 'attachment_removed') {
+    if (!a) { map.set(p.attachment_id, { attachment_id: p.attachment_id, entry_id: p.entry_id, filename: '', mime: '', size: 0, sha256_ct: '', added_at: null, removed_at: ts }); return; }
+    if (!a.removed_at || ts < a.removed_at) a.removed_at = ts;
+  }
+}
+// ── attachments:pure end ────────────────────────────────────
+
+// Bytes IO across the three backends. Sub-paths are `dir/name`; FSA and OPFS
+// walk directory handles, the NakliOS host takes the path as-is.
+async function _subDir(dir, sub, create) { return dir.getDirectoryHandle(sub, { create }); }
+async function readFileBytes(dir, path) {
+  if (isNakliOSDir(dir)) {
+    try { const b = await naklios.fs.readBinary(path); return b instanceof Uint8Array ? b : new Uint8Array(b); }
+    catch (e) { if (/not found|does not exist|404/i.test(e?.message || '')) return null; try { if (!(await naklios.fs.exists(path))) return null; } catch {} throw e; }
+  }
+  try {
+    const [sub, name] = path.split('/');
+    const d = name ? await _subDir(dir, sub, false) : dir;
+    const fh = await d.getFileHandle(name || sub);
+    return new Uint8Array(await (await fh.getFile()).arrayBuffer());
+  } catch { return null; }
+}
+async function writeFileBytes(dir, path, bytes) {
+  if (isNakliOSDir(dir)) { await naklios.fs.write(path, bytes); return; }
+  const [sub, name] = path.split('/');
+  const d = name ? await _subDir(dir, sub, true) : dir;
+  const fh = await d.getFileHandle(name || sub, { create: true });
+  const w = await fh.createWritable(); await w.write(bytes); await w.close();
+}
+async function fileExists(dir, path) {
+  if (isNakliOSDir(dir)) { try { return !!(await naklios.fs.exists(path)); } catch { return false; } }
+  try { const [sub, name] = path.split('/'); const d = name ? await _subDir(dir, sub, false) : dir; await d.getFileHandle(name || sub); return true; } catch { return false; }
+}
+async function deleteFile(dir, path) {
+  if (isNakliOSDir(dir)) { await naklios.fs.delete(path); return; }
+  const [sub, name] = path.split('/');
+  const d = name ? await _subDir(dir, sub, false) : dir;
+  await d.removeEntry(name || sub);
+}
+
+async function attKey(id) {
+  if (!S.master_secret) throw new Error('Attachments need a v2 vault (upgrade in Settings → Security).');
+  return importAesKey(await hkdf32(S.master_secret, 'tijori-v2', attKeyInfo(id)));
+}
+async function attEncrypt(id, plain) {
+  const nonce = crypto.getRandomValues(new Uint8Array(ATT_NONCE_LEN));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode(id) }, await attKey(id), plain));
+  return attFrame(nonce, ct);
+}
+async function attDecrypt(id, bytes) {
+  const { nonce, ct } = attUnframe(bytes);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode(id) }, await attKey(id), ct));
+}
+async function attSha256Hex(bytes) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join(''); }
+function attNewId() { return [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join(''); }
+
+// Add files to the entry being edited: blob first, then the event that names it.
+async function handleAttachFiles(files) {
+  const id = S._editingId; if (!id || !files || !files.length) return;
+  if (!S.master_secret) { toast('Attachments need a v2 vault. Upgrade in Settings → Security first.', { error: true }); return; }
+  for (const file of files) {
+    if (file.size > ATT_HARD_CAP) { toast(`${file.name}: over the 50 MB limit — not attached.`, { error: true }); continue; }
+    if (file.size > ATT_SOFT_CAP && !(await confirmDialog('Large attachment', `${file.name} is ${attFmtSize(file.size)}. Attachments above 10 MB make folder and LAN sync slower and never travel over QR. Attach anyway?`, 'Attach'))) continue;
+    const attachment_id = attNewId();
+    try {
+      $('att-hint').textContent = `Encrypting ${file.name}…`;
+      const plain = new Uint8Array(await file.arrayBuffer());
+      const framed = await attEncrypt(attachment_id, plain);
+      plain.fill(0);
+      const sha256_ct = await attSha256Hex(framed);
+      await writeFileBytes(S.dirHandle, attPath(attachment_id), framed);
+      await appendEvent('attachment_added', { entry_id: id, attachment_id, filename: file.name.slice(0, 255), mime: (file.type || '').slice(0, 100), size: file.size, sha256_ct });
+      await loadAndMerge();
+    } catch (e) { toast(`Could not attach ${file.name}: ${e.message}`, { error: true }); }
+  }
+  $('att-hint').textContent = '';
+  await renderAttachments(id);
+  renderEntryList();
+}
+async function removeAttachment(attachment_id) {
+  const a = S.attachments?.get(attachment_id); if (!a) return;
+  if (!(await confirmDialog('Remove attachment', `Remove "${a.filename}" from this entry? The encrypted file stays on disk until you run Settings → Vault → Garbage-collect attachments.`, 'Remove', true))) return;
+  await appendEvent('attachment_removed', { entry_id: a.entry_id, attachment_id, removed_at: nowISO() });
+  await loadAndMerge();
+  await renderAttachments(a.entry_id);
+  renderEntryList();
+}
+async function downloadAttachment(attachment_id) {
+  const a = S.attachments?.get(attachment_id); if (!a) return;
+  try {
+    const bytes = await readFileBytes(S.dirHandle, attPath(attachment_id));
+    if (!bytes) { toast('That file is not on this device yet — sync over LAN, the vault folder, or an archive.', { error: true }); return; }
+    if (await attSha256Hex(bytes) !== a.sha256_ct) { toast('Attachment file does not match its record — refusing to open it.', { error: true }); return; }
+    const plain = await attDecrypt(attachment_id, bytes);
+    downloadBlob(new Blob([plain], { type: a.mime || 'application/octet-stream' }), a.filename || 'attachment');
+    setTimeout(() => plain.fill(0), 6000);
+  } catch (e) { toast('Could not open attachment: ' + e.message, { error: true }); }
+}
+async function renderAttachments(entryId) {
+  const sec = $('entry-attachments'), list = $('att-list'), count = $('att-count'), hint = $('att-hint'), add = $('att-add-btn');
+  if (!sec) return;
+  const entry = entryId ? S.entries.get(entryId) : null;
+  if (!entry) { sec.hidden = false; list.innerHTML = ''; count.textContent = ''; add.disabled = true; hint.textContent = 'Save the entry first, then attach files.'; return; }
+  if (!S.master_secret) { sec.hidden = false; list.innerHTML = ''; count.textContent = ''; add.disabled = true; hint.textContent = 'Attachments need a v2 vault — upgrade in Settings → Security.'; return; }
+  sec.hidden = false; add.disabled = false; hint.textContent = '';
+  const rows = [...(entry.attachments?.values() || [])].sort((x, y) => x.added_at < y.added_at ? -1 : 1);
+  count.textContent = rows.length ? `(${rows.length})` : '';
+  if (!rows.length) { list.innerHTML = ''; return; }
+  const present = await Promise.all(rows.map(a => fileExists(S.dirHandle, attPath(a.attachment_id))));
+  list.innerHTML = rows.map((a, i) => `<div class="att-row">
+      <span>📎</span>
+      <span class="att-name" title="${escHtml(a.filename)}">${escHtml(a.filename)}</span>
+      <span class="att-size">${attFmtSize(a.size)}</span>
+      ${present[i] ? `<button class="btn-icon" type="button" title="Download" onclick="downloadAttachment('${a.attachment_id}')">⤓</button>` : `<span class="att-pending" title="The encrypted file has not reached this device. LAN, the vault folder, or an archive will bring it; QR never carries files.">not on this device</span>`}
+      <button class="btn-icon" type="button" title="Remove" onclick="removeAttachment('${a.attachment_id}')">×</button>
+    </div>`).join('');
+}
+
+// Settings → Vault → Garbage-collect: delete blobs whose record is tombstoned
+// or whose entry is deleted. Blobs with no record at all are left alone — a
+// cloud folder can deliver a blob before the .jsonl that names it.
+async function handleAttachmentGc() {
+  if (!S.dirHandle || !S.attachments) return;
+  const victims = [];
+  for (const a of S.attachments.values()) {
+    const dead = a.removed_at || !S.entries.has(a.entry_id);
+    if (dead && await fileExists(S.dirHandle, attPath(a.attachment_id))) victims.push(a);
+  }
+  if (!victims.length) { toast('Nothing to collect — no removed or orphaned attachment files on this device.'); return; }
+  const mb = victims.reduce((n, a) => n + (a.size || 0), 0);
+  if (!(await confirmDialog('Garbage-collect attachments', `${victims.length} attachment file${victims.length > 1 ? 's' : ''} belong to removed attachments or deleted entries (${attFmtSize(mb)} of originals). Delete the encrypted files from this device? Other devices keep theirs until they run this too.`, 'Delete files', true))) return;
+  let n = 0;
+  for (const a of victims) { try { await deleteFile(S.dirHandle, attPath(a.attachment_id)); n++; } catch {} }
+  toast(`Deleted ${n} attachment file${n === 1 ? '' : 's'}.`);
+}
+
+// Blobs present on this device, for archives and the LAN transport.
+async function collectAttachmentBlobs() {
+  const out = {};
+  for (const a of (S.attachments || new Map()).values()) {
+    if (a.removed_at || !S.entries.has(a.entry_id)) continue;
+    const b = await readFileBytes(S.dirHandle, attPath(a.attachment_id));
+    if (b) out[a.attachment_id] = b;
+  }
+  return out;
+}
+// Write blobs that arrived with an archive; skip what we have, verify what we take.
+async function importAttachmentBlobs(map) {
+  let n = 0;
+  for (const [id, b64] of Object.entries(map || {})) {
+    if (!attIsId(id) || typeof b64 !== 'string') continue;
+    if (await fileExists(S.dirHandle, attPath(id))) continue;
+    let bytes; try { bytes = b64d(b64); } catch { continue; }
+    const rec = S.attachments?.get(id);
+    if (rec && rec.sha256_ct && await attSha256Hex(bytes) !== rec.sha256_ct) continue;
+    await writeFileBytes(S.dirHandle, attPath(id), bytes); n++;
+  }
+  return n;
+}
+
+// ══════════════════════════════════════════════════════════
 // LAN / HOTSPOT TRANSPORT  (WebRTC DataChannel, host candidates only)
 // ══════════════════════════════════════════════════════════
 // ── lan-transport:pure begin ────────────────────────────────
@@ -7963,7 +8213,7 @@ async function showLanSend() {
   if (typeof RTCPeerConnection === 'undefined') { _lanStatus('lan-send-status', 'This browser has no WebRTC. Use the QR sequence.'); return; }
   const L = _lan = { gen: (Math.random() * 1e9) | 0 };
   try {
-    L.bytes = await buildArchiveBytes();
+    L.bytes = await buildArchiveBytes({ withAttachments: true });
     L.code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
     L.pc = lanNewPc();
     L.dc = L.pc.createDataChannel('tijori', { ordered: true });
