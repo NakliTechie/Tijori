@@ -565,6 +565,10 @@ textarea { resize: vertical; min-height: 80px; }
 .camera-corner.br { bottom:10px; right:10px; border-bottom-width:3px; border-right-width:3px; border-radius:0 0 4px 0; }
 .qr-recv-status { font-size:13px; color:var(--muted); text-align:center; margin-top:10px; min-height:20px; }
 .qr-recv-status .hit { color:var(--ok); font-weight:700; }
+.lan-canvas { background:#fff; border-radius:8px; image-rendering:pixelated; width:min(100%, 260px); height:auto; aspect-ratio:1; display:inline-block; }
+.lan-progress { height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin-top:8px; }
+.lan-progress-bar { height:100%; width:0; background:var(--ok); transition:width .1s; }
+.lan-ok { color:var(--ok); }
 .qr-bench { font-family:var(--mono, ui-monospace, monospace); font-size:11px; font-variant-numeric:tabular-nums; }
 .qr-frame-dots { display:flex; flex-wrap:wrap; gap:3px; margin-top:6px; justify-content:center; max-height:60px; overflow:hidden; }
 .qr-frame-dot { width:7px; height:7px; border-radius:50%; background:var(--border); transition:background .15s; }
@@ -1036,6 +1040,7 @@ textarea { resize: vertical; min-height: 80px; }
       <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="exportEncryptedArchive()">Export encrypted archive (.tijori)</button>
       <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="exportToKdbx()">Export to KeePass (.kdbx)</button>
       <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="hideModal('modal-settings');showQrSend()">Send vault via QR →</button>
+      <button class="btn secondary" style="width:100%;margin-bottom:8px" onclick="hideModal('modal-settings');showLanSend()">Send vault over LAN / hotspot →</button>
       <button class="btn ghost" style="width:100%;margin-bottom:8px;color:var(--warn);border-color:var(--warn)" onclick="confirmCsvExport()">Export as CSV (⚠ plaintext)</button>
       <button class="btn ghost" style="width:100%;margin-bottom:16px;color:var(--warn);border-color:var(--warn)" onclick="confirmPlainExport()">Export plaintext JSON (⚠ unencrypted)</button>
       <hr class="sep">
@@ -1104,6 +1109,10 @@ textarea { resize: vertical; min-height: 80px; }
         <div class="fmt-name">otpauth:// URIs</div>
         <div class="fmt-desc">Paste one URI per line</div>
       </button>
+      <button class="import-format-btn" data-fmt="lan" onclick="selectImportFmt(this)">
+        <div class="fmt-name">LAN / hotspot</div>
+        <div class="fmt-desc">Same wifi or a phone hotspot</div>
+      </button>
       <button class="import-format-btn" data-fmt="qr" onclick="selectImportFmt(this)">
         <div class="fmt-name">QR sequence</div>
         <div class="fmt-desc">Scan from another device</div>
@@ -1120,6 +1129,31 @@ textarea { resize: vertical; min-height: 80px; }
       <div class="qr-recv-status" id="qr-recv-status">Starting camera…</div>
       <div class="qr-frame-dots" id="qr-frame-dots"></div>
       <div class="qr-recv-status qr-bench" id="qr-bench" hidden></div>
+    </div>
+
+    <!-- LAN receive area -->
+    <div id="lan-recv-area" style="display:none;margin-bottom:14px">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 10px">On the sending device open Settings → Data → <b>Send vault over LAN / hotspot</b>, then scan its code here. Bytes travel directly between the two devices — no server, no relay, nothing leaves the network.</p>
+      <div id="lan-recv-scan">
+        <div class="camera-wrap">
+          <video id="lan-recv-video" autoplay playsinline muted></video>
+          <div class="camera-corner tl"></div><div class="camera-corner tr"></div>
+          <div class="camera-corner bl"></div><div class="camera-corner br"></div>
+        </div>
+        <details style="margin-top:8px"><summary style="font-size:12px;color:var(--muted);cursor:pointer">No camera? Paste the sender's code</summary>
+          <textarea id="lan-recv-paste" rows="3" style="margin-top:6px;font-family:var(--mono);font-size:11px" placeholder="TL1…"></textarea>
+          <button class="btn secondary btn-sm" style="margin-top:6px" onclick="lanRecvPaste()">Use pasted code</button>
+        </details>
+      </div>
+      <div id="lan-recv-answer" style="display:none;text-align:center">
+        <canvas id="lan-recv-canvas" class="lan-canvas"></canvas>
+        <p style="font-size:13px;color:var(--muted);margin:8px 0 0">Show this code to the sending device.</p>
+        <details style="margin-top:6px;text-align:left"><summary style="font-size:12px;color:var(--muted);cursor:pointer">Or copy it</summary>
+          <textarea id="lan-recv-answer-text" rows="3" readonly style="margin-top:6px;font-family:var(--mono);font-size:11px"></textarea>
+        </details>
+      </div>
+      <div class="qr-recv-status" id="lan-recv-status">Starting camera…</div>
+      <div class="lan-progress" id="lan-recv-progress" hidden><div class="lan-progress-bar" id="lan-recv-bar"></div></div>
     </div>
 
     <!-- otpauth URI paste area -->
@@ -1177,6 +1211,39 @@ textarea { resize: vertical; min-height: 80px; }
     <div id="storage-picker-list"></div>
     <div class="actions-bar" style="margin-top:8px">
       <button class="btn ghost btn-sm" onclick="hideModal('modal-storage-picker')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: LAN SEND ══════════════ -->
+<div id="modal-lan-send" class="modal-bg">
+  <div class="modal">
+    <h3>Send vault over LAN / hotspot</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Both devices on the same wifi, or one on the other's hotspot. On the receiving device open Import → <b>LAN / hotspot</b> and scan this code. Only direct device-to-device candidates are used — no STUN, no TURN, no relay. If that cannot connect, use the QR sequence instead.</p>
+    <div id="lan-send-offer" style="text-align:center">
+      <canvas id="lan-send-canvas" class="lan-canvas"></canvas>
+      <div class="qr-counter" id="lan-send-code" style="margin-top:8px"></div>
+      <details style="margin-top:6px;text-align:left"><summary style="font-size:12px;color:var(--muted);cursor:pointer">Or copy the code</summary>
+        <textarea id="lan-send-offer-text" rows="3" readonly style="margin-top:6px;font-family:var(--mono);font-size:11px"></textarea>
+      </details>
+    </div>
+    <div id="lan-send-scan" style="margin-top:12px">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 8px">Then point this camera at the receiver's reply code.</p>
+      <div class="camera-wrap" style="max-width:220px">
+        <video id="lan-send-video" autoplay playsinline muted></video>
+        <div class="camera-corner tl"></div><div class="camera-corner tr"></div>
+        <div class="camera-corner bl"></div><div class="camera-corner br"></div>
+      </div>
+      <details style="margin-top:8px"><summary style="font-size:12px;color:var(--muted);cursor:pointer">No camera? Paste the reply code</summary>
+        <textarea id="lan-send-paste" rows="3" style="margin-top:6px;font-family:var(--mono);font-size:11px" placeholder="TL1…"></textarea>
+        <button class="btn secondary btn-sm" style="margin-top:6px" onclick="lanSendPaste()">Use pasted code</button>
+      </details>
+    </div>
+    <div class="qr-recv-status" id="lan-send-status">Preparing…</div>
+    <div class="lan-progress" id="lan-send-progress" hidden><div class="lan-progress-bar" id="lan-send-bar"></div></div>
+    <hr class="sep">
+    <div style="text-align:right">
+      <button class="btn ghost btn-sm" onclick="closeLanSend()">Done</button>
     </div>
   </div>
 </div>
@@ -3900,6 +3967,7 @@ function hideModal(id) {
   $(id)?.classList.remove('active');
   if (id === 'modal-entry') clearEntryForm();
   if (id === 'modal-import' && _importFmt === 'qr') stopQrReceive();
+  if (id === 'modal-import' && _importFmt === 'lan') stopLanReceive();
 }
 function hideAllModals() {
   document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('active'));
@@ -4648,15 +4716,18 @@ function openImportModal() {
 function selectImportFmt(btn) {
   // Stop camera if switching away from QR
   if (_importFmt === 'qr') stopQrReceive();
+  if (_importFmt === 'lan') stopLanReceive();
   document.querySelectorAll('.import-format-btn').forEach(b => b.classList.remove('selected'));
   btn.classList.add('selected');
   _importFmt = btn.dataset.fmt;
   $('csv-mapper').style.display = _importFmt === 'generic' ? '' : 'none';
   $('otpauth-paste-area').style.display = _importFmt === 'otpauth' ? '' : 'none';
   $('qr-recv-area').style.display = _importFmt === 'qr' ? '' : 'none';
-  const fileField = $('import-file-field'); if (fileField) fileField.style.display = (_importFmt === 'otpauth' || _importFmt === 'qr') ? 'none' : '';
+  $('lan-recv-area').style.display = _importFmt === 'lan' ? '' : 'none';
+  const fileField = $('import-file-field'); if (fileField) fileField.style.display = (_importFmt === 'otpauth' || _importFmt === 'qr' || _importFmt === 'lan') ? 'none' : '';
   if (_importFmt === 'otpauth') { const ta = $('otpauth-paste'); if (ta) { ta.value = ''; } }
   if (_importFmt === 'qr') startQrReceive();
+  if (_importFmt === 'lan') startLanReceive();
   _importParsed = null;
   $('import-preview').style.display = 'none';
 }
@@ -7517,17 +7588,20 @@ async function showQrSend() {
   showModal('modal-qr-send');
   $('qr-send-counter').textContent = 'Building…';
   $('qr-send-hint').textContent = '';
-  // Build encrypted archive in memory
+  _qrBytes = await buildArchiveBytes();
+  _qrTag = await qrTagFor(_qrBytes);
+  _qrRebuildFrames();
+}
+
+// The encrypted archive every transport sends: meta + every event stream, verbatim.
+async function buildArchiveBytes() {
   const streamNames = await getAllStreamNames(S.dirHandle);
   const streams = {};
   for (const name of streamNames) {
     const deviceId = name.replace('tijori-events-', '').replace('.jsonl', '');
     streams[deviceId] = (await readStream(S.dirHandle, deviceId)).join('\n');
   }
-  const json = JSON.stringify({ format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams });
-  _qrBytes = new TextEncoder().encode(json);
-  _qrTag = await qrTagFor(_qrBytes);
-  _qrRebuildFrames();
+  return new TextEncoder().encode(JSON.stringify({ format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams }));
 }
 
 function _qrRebuildFrames() {
@@ -7746,6 +7820,292 @@ async function _finishQrReceive() {
 }
 
 function stopQrReceive() { _qrStopDetect(); }
+
+// ══════════════════════════════════════════════════════════
+// LAN / HOTSPOT TRANSPORT  (WebRTC DataChannel, host candidates only)
+// ══════════════════════════════════════════════════════════
+// ── lan-transport:pure begin ────────────────────────────────
+// Signal = the WebRTC session description boiled down to what a peer needs to
+// reach us on the local network, carried in ONE static QR: ICE ufrag/pwd, the
+// DTLS certificate fingerprint, setup role, and host candidates only. The
+// receiver rebuilds a full SDP from a fixed template. Anything that is not a
+// host candidate (srflx, prflx, relay) is dropped on both ends, and the
+// RTCPeerConnection is created with no ICE servers, so nothing can leave the
+// network even by accident. The DTLS fingerprint in the signal is what
+// authenticates the peer: it travelled over the optical channel, and WebRTC
+// refuses a remote certificate that does not match it. The pairing code on
+// top binds the DataChannel to that exchange by HMAC; it is not key material
+// and is never reused.
+const LAN_PROTO = 'TL1';
+const LAN_CHUNK = 16384;
+
+function lanCompactSdp(sdp) {
+  const get = re => { const m = sdp.match(re); return m ? m[1] : null; };
+  const u = get(/^a=ice-ufrag:(\S+)/m), pw = get(/^a=ice-pwd:(\S+)/m);
+  const fp = get(/^a=fingerprint:sha-256 ([0-9A-Fa-f:]+)/m);
+  const setup = get(/^a=setup:(\S+)/m) || 'actpass';
+  const mid = get(/^a=mid:(\S+)/m) || '0';
+  const port = get(/^a=sctp-port:(\d+)/m) || '5000';
+  if (!u || !pw || !fp) throw new Error('lan: SDP is missing ICE or DTLS parameters');
+  const c = [];
+  for (const m of sdp.matchAll(/^a=candidate:\S+ 1 udp \d+ (\S+) (\d+) typ host/gmi)) c.push([m[1], +m[2]]);
+  if (!c.length) throw new Error('lan: no host candidates');
+  return { v: 1, u, p: pw, f: fp.replace(/:/g, '').toUpperCase(), s: setup, m: mid, sp: +port, c };
+}
+
+function lanExpandSdp(sig) {
+  if (!sig || sig.v !== 1 || !/^[0-9A-F]{64}$/.test(sig.f) || !Array.isArray(sig.c) || !sig.c.length) throw new Error('lan: bad signal');
+  // every field becomes an SDP line: nothing may carry a line break or stray syntax
+  if (!/^[A-Za-z0-9+/]{4,256}$/.test(sig.u) || !/^[A-Za-z0-9+/]{22,256}$/.test(sig.p)) throw new Error('lan: bad ICE credentials');
+  if (!['actpass', 'active', 'passive'].includes(sig.s) || !/^[A-Za-z0-9]{1,16}$/.test(String(sig.m)) || !(Number.isInteger(sig.sp) && sig.sp > 0 && sig.sp < 65536)) throw new Error('lan: bad signal');
+  if (sig.k !== undefined && !/^\d{6}$/.test(String(sig.k))) throw new Error('lan: bad pairing code');
+  const fp = sig.f.match(/../g).join(':');
+  const lines = [
+    'v=0', 'o=- 1 1 IN IP4 127.0.0.1', 's=-', 't=0 0', 'a=group:BUNDLE ' + sig.m, 'a=msid-semantic: WMS',
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
+    'a=ice-ufrag:' + sig.u, 'a=ice-pwd:' + sig.p, 'a=ice-options:trickle',
+    'a=fingerprint:sha-256 ' + fp, 'a=setup:' + sig.s, 'a=mid:' + sig.m,
+    'a=sctp-port:' + sig.sp, 'a=max-message-size:262144',
+  ];
+  sig.c.forEach(([ip, port], i) => {
+    if (!/^[A-Za-z0-9.:\-]+$/.test(ip) || !(port > 0 && port < 65536)) throw new Error('lan: bad candidate');
+    lines.push(`a=candidate:${i + 1} 1 udp ${2113937151 - i} ${ip} ${port} typ host generation 0`);
+  });
+  lines.push('a=end-of-candidates');
+  return lines.join('\r\n') + '\r\n';
+}
+
+// QR / paste form: TL1 + base45(JSON). Alphanumeric, one static frame.
+function lanEncodeSignal(sig) { return LAN_PROTO + b45e(new TextEncoder().encode(JSON.stringify(sig))); }
+function lanDecodeSignal(str) {
+  if (typeof str !== 'string' || !str.startsWith(LAN_PROTO)) return null;
+  try { const sig = JSON.parse(new TextDecoder().decode(b45d(str.slice(LAN_PROTO.length).trim()))); lanExpandSdp(sig); return sig; } catch { return null; }
+}
+
+// The bytes both ends MAC with the pairing code: the two fingerprints in a
+// fixed order (offerer first), so a replayed proof from another session fails.
+function lanPairingInput(offerFp, answerFp) { return new TextEncoder().encode('tijori-lan-v1|' + offerFp + '|' + answerFp); }
+// ── lan-transport:pure end ──────────────────────────────────
+
+async function lanHmac(code, input) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(code)), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return b64e(new Uint8Array(await crypto.subtle.sign('HMAC', key, input)));
+}
+async function lanSha256Hex(bytes) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join(''); }
+
+function lanNewPc() { return new RTCPeerConnection({ iceServers: [], iceTransportPolicy: 'all', bundlePolicy: 'max-bundle' }); }
+function lanGathered(pc, ms = 2500) {
+  return new Promise(res => {
+    if (pc.iceGatheringState === 'complete') return res();
+    const t = setTimeout(res, ms);
+    pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } });
+  });
+}
+// Exit check: every succeeded candidate pair is host ↔ host. Returns the pair or throws.
+async function lanAssertLocalOnly(pc) {
+  const stats = await pc.getStats();
+  const byId = {}; stats.forEach(r => { byId[r.id] = r; });
+  let pair = null;
+  stats.forEach(r => { if (r.type === 'candidate-pair' && (r.state === 'succeeded') && (r.nominated || !pair)) pair = r; });
+  if (!pair) throw new Error('no connected candidate pair');
+  const l = byId[pair.localCandidateId], r = byId[pair.remoteCandidateId];
+  if (!l || !r || l.candidateType !== 'host' || r.candidateType !== 'host') throw new Error(`non-local path: ${l && l.candidateType} ↔ ${r && r.candidateType}`);
+  return { local: `${l.address || l.ip || '?'}:${l.port}`, remote: `${r.address || r.ip || '?'}:${r.port}`, protocol: l.protocol };
+}
+function lanPaintQr(canvasId, text) {
+  const canvas = $(canvasId); if (!canvas) return;
+  const qr = qrcodegen.QrCode.encodeText(text, qrcodegen.QrCode.Ecc.MEDIUM);
+  const css = Math.max(160, Math.round(canvas.getBoundingClientRect().width) || 260), sz = Math.round(css * (window.devicePixelRatio || 1));
+  canvas.width = canvas.height = sz;
+  const ctx = canvas.getContext('2d'), mod = qr.size, scale = Math.max(1, Math.floor(sz / (mod + 8))), pad = Math.floor((sz - mod * scale) / 2);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, sz, sz); ctx.fillStyle = '#000';
+  for (let y = 0; y < mod; y++) for (let x = 0; x < mod; x++) if (qr.getModule(x, y)) ctx.fillRect(pad + x * scale, pad + y * scale, scale, scale);
+}
+// Camera scan for one static code. Resolves the first rawValue `accept` likes.
+function lanScan(videoId, statusEl, accept) {
+  const st = { stream: null, gen: 0, stop() { st.gen++; if (st.stream) { st.stream.getTracks().forEach(t => t.stop()); st.stream = null; } } };
+  (async () => {
+    if (typeof BarcodeDetector === 'undefined') { if (statusEl) statusEl.textContent = 'Camera scanning needs Chrome or Safari 17+. Paste the code instead.'; return; }
+    let det;
+    try {
+      st.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      const video = $(videoId); video.srcObject = st.stream; await video.play();
+      det = new BarcodeDetector({ formats: ['qr_code'] });
+      const gen = ++st.gen; let busy = false;
+      const pump = async () => {
+        if (gen !== st.gen) return;
+        _qrNextTick(pump);
+        if (busy || video.readyState < 2) return;
+        busy = true;
+        try { for (const c of await det.detect(video)) if (accept(c.rawValue)) { st.stop(); return; } } catch {}
+        busy = false;
+      };
+      _qrNextTick(pump);
+    } catch { if (statusEl) statusEl.textContent = 'Camera unavailable — paste the code instead.'; }
+  })();
+  return st;
+}
+function lanProgress(barId, wrapId, done, total) {
+  const w = $(wrapId), b = $(barId); if (!w || !b) return;
+  w.hidden = false; b.style.width = `${Math.min(100, Math.round(done / total * 100))}%`;
+}
+
+// ── Sender ──────────────────────────────────────────────────
+let _lan = null;   // { pc, dc, scan, offerSig, code, bytes, timer, gen }
+function _lanStatus(id, text, ok) { const el = $(id); if (el) { el.textContent = text; el.classList.toggle('lan-ok', !!ok); } }
+
+async function showLanSend() {
+  if (!S.key || !S.dirHandle) { toast('Unlock a vault first.', { error: true }); return; }
+  closeLanSend(true);
+  showModal('modal-lan-send');
+  $('lan-send-progress').hidden = true; $('lan-send-bar').style.width = '0';
+  _lanStatus('lan-send-status', 'Preparing…');
+  if (typeof RTCPeerConnection === 'undefined') { _lanStatus('lan-send-status', 'This browser has no WebRTC. Use the QR sequence.'); return; }
+  const L = _lan = { gen: (Math.random() * 1e9) | 0 };
+  try {
+    L.bytes = await buildArchiveBytes();
+    L.code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+    L.pc = lanNewPc();
+    L.dc = L.pc.createDataChannel('tijori', { ordered: true });
+    L.dc.binaryType = 'arraybuffer';
+    await L.pc.setLocalDescription(await L.pc.createOffer());
+    await lanGathered(L.pc);
+    if (_lan !== L) return;
+    L.offerSig = lanCompactSdp(L.pc.localDescription.sdp);
+    L.offerSig.k = L.code;
+    const text = lanEncodeSignal(L.offerSig);
+    lanPaintQr('lan-send-canvas', text);
+    $('lan-send-offer-text').value = text;
+    $('lan-send-code').textContent = `Code ${L.code.slice(0, 3)} ${L.code.slice(3)}`;
+    _lanStatus('lan-send-status', `Waiting for the receiver to scan… (${L.offerSig.c.length} local address${L.offerSig.c.length > 1 ? 'es' : ''})`);
+    L.scan = lanScan('lan-send-video', null, raw => { const sig = lanDecodeSignal(raw); if (!sig) return false; _lanAcceptAnswer(sig); return true; });
+    L.pc.addEventListener('connectionstatechange', () => { if (_lan === L && ['failed', 'disconnected', 'closed'].includes(L.pc.connectionState) && !L.done) _lanFail('lan-send-status', 'Could not connect on this network. Use the QR sequence instead.'); });
+  } catch (e) { _lanFail('lan-send-status', 'Could not prepare: ' + e.message); }
+}
+function lanSendPaste() { const sig = lanDecodeSignal(($('lan-send-paste').value || '').trim()); if (!sig) { toast('That is not a Tijori LAN code.', { error: true }); return; } _lanAcceptAnswer(sig); }
+
+async function _lanAcceptAnswer(sig) {
+  const L = _lan; if (!L || !L.pc || L.answered) return;
+  L.answered = true; if (L.scan) L.scan.stop();
+  $('lan-send-scan').style.display = 'none';
+  _lanStatus('lan-send-status', 'Connecting…');
+  L.timer = setTimeout(() => { if (_lan === L && !L.done) _lanFail('lan-send-status', 'No connection after 20 s. Use the QR sequence instead.'); }, 20000);
+  try {
+    await L.pc.setRemoteDescription({ type: 'answer', sdp: lanExpandSdp(sig) });
+    await new Promise((res, rej) => { if (L.dc.readyState === 'open') return res(); L.dc.onopen = res; L.dc.onerror = e => rej(new Error('channel error')); });
+    const path = await lanAssertLocalOnly(L.pc);
+    // pairing proof from the receiver first, then ours with the metadata
+    const expect = await lanHmac(L.code, lanPairingInput(L.offerSig.f, sig.f));
+    const hello = await new Promise((res, rej) => { L.dc.onmessage = e => res(e.data); setTimeout(() => rej(new Error('no pairing proof')), 5000); });
+    let h; try { h = JSON.parse(hello); } catch { throw new Error('bad pairing proof'); }
+    if (h.t !== 'hello' || h.mac !== expect) throw new Error('pairing code mismatch');
+    _lanStatus('lan-send-status', `Local only ✓ ${path.local} → ${path.remote} · sending…`, true);
+    const sha = await lanSha256Hex(L.bytes);
+    L.dc.send(JSON.stringify({ t: 'meta', len: L.bytes.length, sha, chunk: LAN_CHUNK, mac: await lanHmac(L.code, lanPairingInput(sig.f, L.offerSig.f)) }));
+    const t0 = performance.now();
+    L.dc.bufferedAmountLowThreshold = 256 * 1024;
+    for (let o = 0; o < L.bytes.length; o += LAN_CHUNK) {
+      if (_lan !== L) return;
+      if (L.dc.bufferedAmount > 1024 * 1024) await new Promise(res => { L.dc.onbufferedamountlow = res; });
+      L.dc.send(L.bytes.subarray(o, o + LAN_CHUNK));
+      lanProgress('lan-send-bar', 'lan-send-progress', o + LAN_CHUNK, L.bytes.length);
+    }
+    const ack = await new Promise((res, rej) => { L.dc.onmessage = e => res(e.data); setTimeout(() => rej(new Error('receiver did not confirm')), 30000); });
+    const secs = (performance.now() - t0) / 1000;
+    if (JSON.parse(ack).t !== 'done') throw new Error('receiver reported a problem');
+    L.done = true; clearTimeout(L.timer);
+    const rate = L.bytes.length / 1024 / secs;
+    _lanStatus('lan-send-status', `Sent ✓ ${(L.bytes.length / 1024).toFixed(1)} KB in ${secs.toFixed(2)} s · ${rate > 1024 ? (rate / 1024).toFixed(1) + ' MB/s' : rate.toFixed(0) + ' KB/s'} · local only ${path.local} → ${path.remote}`, true);
+    console.log('Tijori LAN bench: ' + JSON.stringify({ transport: 'TL1', bytes: L.bytes.length, secs: +secs.toFixed(3), kb_per_s: +rate.toFixed(1), path }));
+    try { L.pc.close(); } catch {}
+  } catch (e) {
+    try { if (L.dc && L.dc.readyState === 'open') L.dc.send(JSON.stringify({ t: 'error', m: e.message })); } catch {}
+    _lanFail('lan-send-status', (e.message === 'pairing code mismatch' ? 'Pairing failed — the reply came from a different session.' : 'Could not connect on this network: ' + e.message) + ' Use the QR sequence instead.');
+  }
+}
+function _lanFail(statusId, msg) { _lanStatus(statusId, '⚠ ' + msg); const L = _lan; if (L) { L.done = true; clearTimeout(L.timer); if (L.scan) L.scan.stop(); try { L.pc && L.pc.close(); } catch {} } }
+function closeLanSend(silent) {
+  const L = _lan; _lan = null;
+  if (L) { clearTimeout(L.timer); if (L.scan) L.scan.stop(); try { L.pc && L.pc.close(); } catch {} L.bytes = null; }
+  if (!silent) hideModal('modal-lan-send');
+  const sc = $('lan-send-scan'); if (sc) sc.style.display = '';
+}
+
+// ── Receiver ────────────────────────────────────────────────
+let _lanR = null;   // { pc, scan, offerSig, answerSig, chunks, got, meta, timer }
+function startLanReceive() {
+  stopLanReceive();
+  const R = _lanR = { chunks: [], got: 0 };
+  $('lan-recv-scan').style.display = ''; $('lan-recv-answer').style.display = 'none';
+  $('lan-recv-progress').hidden = true; $('lan-recv-bar').style.width = '0';
+  if (typeof RTCPeerConnection === 'undefined') { _lanStatus('lan-recv-status', 'This browser has no WebRTC. Use the QR sequence.'); return; }
+  _lanStatus('lan-recv-status', 'Scan the sender\'s code…');
+  R.scan = lanScan('lan-recv-video', $('lan-recv-status'), raw => { const sig = lanDecodeSignal(raw); if (!sig || !sig.k) return false; _lanAcceptOffer(sig); return true; });
+}
+function lanRecvPaste() { const sig = lanDecodeSignal(($('lan-recv-paste').value || '').trim()); if (!sig || !sig.k) { toast('That is not a Tijori LAN code.', { error: true }); return; } _lanAcceptOffer(sig); }
+
+async function _lanAcceptOffer(sig) {
+  const R = _lanR; if (!R || R.pc) return;
+  if (R.scan) R.scan.stop();
+  R.offerSig = sig;
+  _lanStatus('lan-recv-status', 'Preparing reply…');
+  try {
+    R.pc = lanNewPc();
+    R.pc.addEventListener('datachannel', e => { R.dc = e.channel; R.dc.binaryType = 'arraybuffer'; R.dc.onopen = () => _lanRecvOpen(R); R.dc.onmessage = ev => _lanRecvMessage(R, ev.data); if (R.dc.readyState === 'open') _lanRecvOpen(R); });
+    await R.pc.setRemoteDescription({ type: 'offer', sdp: lanExpandSdp(sig) });
+    await R.pc.setLocalDescription(await R.pc.createAnswer());
+    await lanGathered(R.pc);
+    if (_lanR !== R) return;
+    R.answerSig = lanCompactSdp(R.pc.localDescription.sdp);
+    const text = lanEncodeSignal(R.answerSig);
+    $('lan-recv-scan').style.display = 'none'; $('lan-recv-answer').style.display = '';
+    lanPaintQr('lan-recv-canvas', text); $('lan-recv-answer-text').value = text;
+    _lanStatus('lan-recv-status', 'Show this reply to the sender · waiting to connect…');
+    R.timer = setTimeout(() => { if (_lanR === R && !R.done) _lanRecvFail('No connection after 60 s. Use the QR sequence instead.'); }, 60000);
+    R.pc.addEventListener('connectionstatechange', () => { if (_lanR === R && ['failed', 'closed', 'disconnected'].includes(R.pc.connectionState) && !R.done) _lanRecvFail('The connection dropped. Use the QR sequence instead.'); });
+  } catch (e) { _lanRecvFail('Could not prepare a reply: ' + e.message); }
+}
+async function _lanRecvOpen(R) {
+  if (R.opened) return; R.opened = true;
+  try {
+    R.path = await lanAssertLocalOnly(R.pc);
+    R.dc.send(JSON.stringify({ t: 'hello', mac: await lanHmac(R.offerSig.k, lanPairingInput(R.offerSig.f, R.answerSig.f)) }));
+    _lanStatus('lan-recv-status', `Local only ✓ ${R.path.remote} → ${R.path.local} · receiving…`, true);
+    R.t0 = performance.now();
+  } catch (e) { _lanRecvFail('Refusing a non-local path: ' + e.message); }
+}
+async function _lanRecvMessage(R, data) {
+  if (R.done) return;
+  try {
+    if (typeof data === 'string') {
+      const m = JSON.parse(data);
+      if (m.t === 'error') throw new Error(m.m === 'pairing code mismatch' ? 'pairing code mismatch' : 'sender stopped: ' + m.m);
+      if (m.t !== 'meta') return;
+      if (m.mac !== await lanHmac(R.offerSig.k, lanPairingInput(R.answerSig.f, R.offerSig.f))) throw new Error('pairing code mismatch');
+      R.meta = m; R.buf = new Uint8Array(m.len); R.got = 0;
+      return;
+    }
+    if (!R.meta) throw new Error('data before metadata');
+    const part = new Uint8Array(data);
+    if (R.got + part.length > R.buf.length) throw new Error('more data than announced');
+    R.buf.set(part, R.got); R.got += part.length;
+    lanProgress('lan-recv-bar', 'lan-recv-progress', R.got, R.buf.length);
+    if (R.got < R.buf.length) return;
+    const secs = (performance.now() - R.t0) / 1000, len = R.buf.length;
+    if (await lanSha256Hex(R.buf) !== R.meta.sha) throw new Error('archive checksum mismatch');
+    _lanStatus('lan-recv-status', 'Decoding vault…');
+    await importArchive(new TextDecoder().decode(R.buf));
+    R.done = true; clearTimeout(R.timer);
+    R.dc.send(JSON.stringify({ t: 'done' }));
+    console.log('Tijori LAN bench: ' + JSON.stringify({ transport: 'TL1', side: 'receive', bytes: len, secs: +secs.toFixed(3), kb_per_s: +(len / 1024 / secs).toFixed(1), path: R.path }));
+    _lanStatus('lan-recv-status', `Received ✓ ${(len / 1024).toFixed(1)} KB in ${secs.toFixed(2)} s · local only`, true);
+    renderEntryList(); renderTopbar();
+    hideModal('modal-import');   // tears the receiver down (stopLanReceive); nothing below may touch R.buf
+    toast(`Vault received over LAN (${(len / 1024).toFixed(1)} KB in ${secs.toFixed(2)} s).`);
+  } catch (e) { console.warn('Tijori LAN receive:', e); try { R.dc && R.dc.send(JSON.stringify({ t: 'error', m: e.message })); } catch {} _lanRecvFail((e.message === 'pairing code mismatch' ? 'Pairing failed — this code came from a different session.' : 'Transfer failed: ' + e.message) + ' Use the QR sequence instead.'); }
+}
+function _lanRecvFail(msg) { _lanStatus('lan-recv-status', '⚠ ' + msg); const R = _lanR; if (R) { R.done = true; clearTimeout(R.timer); if (R.scan) R.scan.stop(); try { R.pc && R.pc.close(); } catch {} } }
+function stopLanReceive() { const R = _lanR; _lanR = null; if (R) { clearTimeout(R.timer); if (R.scan) R.scan.stop(); try { R.pc && R.pc.close(); } catch {} R.buf = null; } }
 
 // ── Single-QR scan for the Add TOTP modal (otpauth:// from a service QR) ──
 let _entryQrStream = null, _entryQrTimer = null;

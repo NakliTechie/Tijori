@@ -120,7 +120,8 @@ Your vault is yours. Three ways to leave Tijori without losing data:
 | Storage | Standalone: `FileSystemDirectoryHandle` on desktop, OPFS fallback on iOS/mobile. Hosted: app-scoped `naklios.fs` over a user-selected NakliOS Folder or encrypted Crate backend. |
 | Reconnect | FSA handle persisted in IndexedDB (permission re-requested on next visit); OPFS vault name persisted (reconnects silently) |
 | QR flash | Archive sent as `TJ3` frames — a systematic LT fountain code over K blocks: the first K frames are the blocks themselves, every frame after is an XOR of blocks chosen by a PRNG seeded from the frame number, so a missed frame costs one more frame rather than a lap. Header `TJ3` + chunk + length + seq + 4-char SHA tag; payload base45 (RFC 9285), so each frame is one QR alphanumeric segment at EC-L. Frame size is selectable on the sender (450 B → 2.84 KB / v40). Nayuki qrcodegen inlined, receiver via `BarcodeDetector` with a peeling decoder; older `TJ2` and `TJ1` carousel senders are still accepted. |
-| Dependencies | **Zero** |
+| LAN / hotspot | WebRTC DataChannel with `iceServers: []` — host candidates only, no STUN, no TURN, no relay, no signaling server. The offer and answer each travel as ONE static QR (`TL1` + base45 JSON of ufrag/pwd/DTLS fingerprint/host candidates, ~400 chars → v12). The DTLS fingerprint in that QR is what authenticates the peer; a 6-digit pairing code in the offer is HMAC-checked over both fingerprints before a byte moves. After connect, `getStats()` must show a host↔host candidate pair or the transfer is refused ("non-local path: host ↔ prflx"). ICE failure fails closed to the QR sequence — never to a third party. |
+| Dependencies | **Zero** (runtime). `jsqr` is a dev-only dependency for the CI render check. |
 | Build step | **None** |
 
 ## Vault format
@@ -176,6 +177,12 @@ Use it for:
 - **Air-gapped environments** — no cloud vendor, no P2P software, no cables. Just two screens and a camera.
 
 Supported where `BarcodeDetector` is available (Chrome, Safari 17+).
+
+### LAN / hotspot — direct device-to-device
+
+**Settings → Data → Send vault over LAN / hotspot** on the source; **Import → LAN / hotspot** on the receiver. Both devices on the same wifi, or one on the other's hotspot (a hotspot is your own infrastructure, so the sovereignty posture holds without a shared network). The sender shows one static QR; the receiver scans it and shows one reply QR; the sender scans that. Then the encrypted archive moves over a WebRTC DataChannel at LAN speed — this is the transport for anything bigger than a few hundred KB.
+
+What it never does: no STUN, no TURN, no relay, no signaling server. The peer connection is created with no ICE servers, only host candidates are exchanged, and after connecting Tijori checks the live candidate pair and refuses anything that is not host↔host. If the two devices cannot reach each other directly, it says so and points you at the QR sequence — it does not fall back to a third party.
 
 ### Other transports
 
