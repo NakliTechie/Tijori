@@ -119,7 +119,7 @@ Your vault is yours. Three ways to leave Tijori without losing data:
 | TOTP | RFC 6238 — WebCrypto `HMAC-SHA-{1,256,512}`, base32 inline (~25 lines) |
 | Storage | Standalone: `FileSystemDirectoryHandle` on desktop, OPFS fallback on iOS/mobile. Hosted: app-scoped `naklios.fs` over a user-selected NakliOS Folder or encrypted Crate backend. |
 | Reconnect | FSA handle persisted in IndexedDB (permission re-requested on next visit); OPFS vault name persisted (reconnects silently) |
-| QR flash | Archive chunked into `TJ2` frames — `TJ2` + 4-digit total + 4-digit index + base45 payload (RFC 9285), so every frame is a single QR alphanumeric segment at EC-L. Frame size is selectable on the sender (450 B → 2.85 KB / v40). Nayuki qrcodegen inlined, receiver via `BarcodeDetector`; older `TJ1|total|index|b64` senders are still accepted. Out-of-order and duplicate frames are fine; receiver waits for all indices. |
+| QR flash | Archive sent as `TJ3` frames — a systematic LT fountain code over K blocks: the first K frames are the blocks themselves, every frame after is an XOR of blocks chosen by a PRNG seeded from the frame number, so a missed frame costs one more frame rather than a lap. Header `TJ3` + chunk + length + seq + 4-char SHA tag; payload base45 (RFC 9285), so each frame is one QR alphanumeric segment at EC-L. Frame size is selectable on the sender (450 B → 2.84 KB / v40). Nayuki qrcodegen inlined, receiver via `BarcodeDetector` with a peeling decoder; older `TJ2` and `TJ1` carousel senders are still accepted. |
 | Dependencies | **Zero** |
 | Build step | **None** |
 
@@ -167,7 +167,7 @@ Each device writes only its own `.jsonl` file. Sync is whatever moves files betw
 
 ### Air-gapped sync — QR flash
 
-The transport worth calling out: **Settings → Data → Send vault via QR**. Tijori builds the full encrypted archive in memory, chunks it into base45 `TJ2` frames (pick the frame size on the sender — bigger moves more per flash, smaller is easier for a shaky camera), and loops an animated QR on screen. On the receiving device (Import → QR sequence), the camera picks up frames with `BarcodeDetector`, and a grid of dots fills in as each chunk arrives. Out-of-order and duplicate frames are normal — the receiver waits for all indices, reassembles, decrypts, and merges.
+The transport worth calling out: **Settings → Data → Send vault via QR**. Tijori builds the full encrypted archive in memory, splits it into blocks (pick the frame size on the sender — bigger moves more per flash, smaller is easier for a shaky camera), and streams fountain-coded QR frames: the blocks once in order, then endless repair frames that each mix a few blocks. The receiver can start at any point and never waits for a loop to come round. On the receiving device (Import → QR sequence), the camera picks up frames with `BarcodeDetector`, and a grid of dots fills in as each chunk arrives. Out-of-order and duplicate frames are normal — the receiver waits for all indices, reassembles, decrypts, and merges.
 
 Use it for:
 

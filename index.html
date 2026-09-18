@@ -1184,7 +1184,7 @@ textarea { resize: vertical; min-height: 80px; }
 <div id="modal-qr-send" class="modal-bg">
   <div class="modal modal-wide">
     <h3>Send vault via QR</h3>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Show this screen to the receiving device. The sequence loops — the other device can start scanning at any frame.</p>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 14px">Show this screen to the receiving device. It can start scanning at any point — every frame carries new information, so a missed frame costs one more frame, not a full loop.</p>
     <div class="qr-send-wrap">
       <canvas id="qr-canvas" width="260" height="260"></canvas>
       <div class="qr-meta">
@@ -1201,7 +1201,7 @@ textarea { resize: vertical; min-height: 80px; }
             <option value="450">Small · 450 B</option>
             <option value="900">Medium · 900 B</option>
             <option value="1800">Large · 1.8 KB</option>
-            <option value="2850">Max · 2.85 KB (v40)</option>
+            <option value="2840">Max · 2.84 KB (v40)</option>
           </select>
         </div>
         <div style="font-size:11px;color:var(--muted)">Bigger frames move more per flash but need a steadier camera. Drop a size if the receiver stalls.</div>
@@ -6635,17 +6635,28 @@ var qrcodegen=function(){"use strict";class a{constructor(t,e,i,s){this.version=
 // ── qr-transport:pure begin ─────────────────────────────────
 // Pure functions, no DOM: scripts/test-qr-transport.mjs evals this region.
 //
-// Frame format TJ2: `TJ2` + 4-digit frame total + 4-digit frame index + base45
-// payload — every character in the QR alphanumeric set, so the encoder packs
-// 11 bits per 2 chars (2 bytes → 3 chars → 16.5 bits, 97% of raw) and every
-// web BarcodeDetector hands the string back untouched. True byte mode is not an
-// option here: BarcodeDetector.rawValue is a string, and ML Kit / Vision mangle
-// non-UTF-8 payloads. TJ1 (`TJ1|total|idx|base64`, byte mode, EC-M) is still
-// accepted on receive so a sender on an older build keeps working.
-const QR_HEADER_LEN = 11;
+// Frame format TJ3 (sent): `TJ3` + chunk(4) + length(7) + seq(5) + tag(4) +
+// base45 payload. Every character is in the QR alphanumeric set, so the encoder
+// packs 11 bits per 2 chars (2 bytes → 3 chars → 16.5 bits, 97% of raw) and
+// every web BarcodeDetector hands the string back untouched. True byte mode is
+// not an option: BarcodeDetector.rawValue is a string, and ML Kit / Vision
+// mangle non-UTF-8 payloads.
+//
+// TJ3 is a systematic LT fountain over K = ceil(length / chunk) blocks:
+//   seq <  K  → source block `seq` verbatim (a clean capture finishes in K frames)
+//   seq >= K  → XOR of d blocks chosen by a PRNG seeded from seq, d from the
+//               1/d distribution; each later frame is fresh information, so a
+//               missed frame costs one more frame, never a lap of the carousel.
+// The sender never loops. tag = 4 base45 chars of the archive's SHA-256: a
+// second sequence started mid-scan is ignored, and reassembly is checked.
+//
+// Still accepted on receive: TJ2 (`TJ2` + total(4) + idx(4) + base45, the
+// 2026-09-18 carousel) and TJ1 (`TJ1|total|idx|base64`, byte mode, EC-M).
+const QR_HEADER_LEN = 23;
 const QR_ALNUM_MAX = 4295;             // qrcodegen's v40 / EC-L alphanumeric ceiling
-const QR_CHUNK_MAX = Math.floor((QR_ALNUM_MAX - QR_HEADER_LEN) / 3) * 2;   // 2856 bytes
+const QR_CHUNK_MAX = Math.floor((QR_ALNUM_MAX - QR_HEADER_LEN) / 3) * 2;   // 2848 bytes
 const QR_CHUNK_DEFAULT = 450;          // unchanged until the phone benchmark says otherwise
+const QR_SEQ_MOD = 100000;             // seq wraps to K after this many frames (~2 h at 15 fps)
 const B45 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:';
 
 // RFC 9285 base45: 2 bytes → 3 chars (little-endian in base 45), trailing byte → 2 chars.
@@ -6682,27 +6693,132 @@ function b45d(str) {
   return out;
 }
 
-// Split an archive into TJ2 frame strings.
-function qrBuildFrames(bytes, chunk) {
-  chunk = Math.max(1, Math.min(QR_CHUNK_MAX, chunk | 0));
-  const total = Math.ceil(bytes.length / chunk);
-  if (total > 9999) throw new Error('Archive too large for QR transport');
-  const frames = [];
-  for (let i = 0; i < total; i++) {
-    const head = 'TJ2' + String(total).padStart(4, '0') + String(i).padStart(4, '0');
-    frames.push(head + b45e(bytes.subarray(i * chunk, (i + 1) * chunk)));
-  }
-  return frames;
+// sfc32, seeded from (seq, K): identical on both ends, so the receiver rebuilds
+// the sender's block choice from the header alone.
+function qrPrng(seq, K) {
+  let a = seq | 0, b = K | 0, c = 0x9e3779b9 | 0, d = 0x85ebca6b | 0;
+  const next = () => {
+    a |= 0; b |= 0; c |= 0; d |= 0;
+    const t = (a + b | 0) + d | 0;
+    d = d + 1 | 0; a = b ^ b >>> 9; b = c + (c << 3) | 0;
+    c = (c << 21 | c >>> 11) + t | 0;
+    return (t >>> 0) / 4294967296;
+  };
+  for (let i = 0; i < 12; i++) next();   // discard the correlated warm-up
+  return next;
 }
 
-// Parse one scanned string → { proto, total, idx, bytes } or null. Accepts TJ2 and TJ1.
+// Which source blocks frame `seq` mixes. Systematic below K; above it, degree d
+// with P(d) ∝ 1/d over 1..K, then d distinct indices by partial Fisher–Yates.
+function qrFountainIndices(seq, K) {
+  if (seq < K) return [seq];
+  const rnd = qrPrng(seq, K);
+  let sum = 0; for (let d = 1; d <= K; d++) sum += 1 / d;
+  let r = rnd() * sum, degree = K;
+  for (let d = 1; d <= K; d++) { r -= 1 / d; if (r < 0) { degree = d; break; } }
+  const pool = Array.from({ length: K }, (_, i) => i);
+  for (let i = 0; i < degree; i++) {
+    const j = i + Math.floor(rnd() * (K - i));
+    const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+  }
+  return pool.slice(0, degree).sort((x, y) => x - y);
+}
+
+// Build frame `seq` of a TJ3 sequence. tag: 4 base45 chars from the archive hash.
+function qrFountainFrame(bytes, chunk, tag, seq) {
+  chunk = Math.max(1, Math.min(QR_CHUNK_MAX, chunk | 0));
+  const K = Math.ceil(bytes.length / chunk);
+  if (K < 1 || K > 9999) throw new Error('Archive too large for QR transport');
+  if (bytes.length > 9999999) throw new Error('Archive too large for QR transport');
+  seq = seq % QR_SEQ_MOD; if (seq < 0) seq = 0;
+  const out = new Uint8Array(chunk);
+  for (const i of qrFountainIndices(seq, K)) {
+    const blk = bytes.subarray(i * chunk, (i + 1) * chunk);
+    for (let j = 0; j < blk.length; j++) out[j] ^= blk[j];
+  }
+  return 'TJ3' + String(chunk).padStart(4, '0') + String(bytes.length).padStart(7, '0') +
+    String(seq).padStart(5, '0') + tag + b45e(out);
+}
+// seq → next seq: run through the systematic frames once, then repair forever.
+function qrFountainNextSeq(seq, K) { const n = seq + 1; return n >= QR_SEQ_MOD ? K : n; }
+
+// Peeling decoder for one TJ3 sequence.
+class QrFountainDecoder {
+  constructor(chunk, length, tag) {
+    this.chunk = chunk; this.length = length; this.tag = tag;
+    this.K = Math.ceil(length / chunk);
+    this.blocks = new Array(this.K); this.solved = 0;
+    this.pending = new Map();   // residual index list joined by ',' → { idx, data }
+  }
+  get done() { return this.solved === this.K; }
+  // Returns true when the frame changed the decoder's state (new information).
+  accept(seq, bytes) {
+    if (this.done || bytes.length !== this.chunk) return false;
+    const data = new Uint8Array(bytes);
+    const rem = [];
+    for (const i of qrFountainIndices(seq % QR_SEQ_MOD, this.K)) {
+      if (this.blocks[i]) { const b = this.blocks[i]; for (let j = 0; j < data.length; j++) data[j] ^= b[j]; }
+      else rem.push(i);
+    }
+    if (rem.length === 0) return false;
+    if (rem.length === 1) { this._solve(rem[0], data); return true; }
+    const key = rem.join(',');
+    if (this.pending.has(key)) return false;
+    this.pending.set(key, { idx: rem, data });
+    return true;
+  }
+  _solve(i, data) {
+    if (this.blocks[i]) return;
+    this.blocks[i] = data; this.solved++;
+    const queue = [i];
+    while (queue.length) {
+      const k = queue.pop();
+      const b = this.blocks[k];
+      for (const [key, p] of [...this.pending]) {
+        const at = p.idx.indexOf(k);
+        if (at < 0) continue;
+        this.pending.delete(key);
+        p.idx.splice(at, 1);
+        for (let j = 0; j < p.data.length; j++) p.data[j] ^= b[j];
+        // Reduce by every member solved since this frame was parked (they are
+        // still in the queue), so what remains is exactly the unknowns.
+        const rest = [];
+        for (const x of p.idx) {
+          if (this.blocks[x]) { const bx = this.blocks[x]; for (let j = 0; j < p.data.length; j++) p.data[j] ^= bx[j]; }
+          else rest.push(x);
+        }
+        if (rest.length === 0) continue;
+        if (rest.length === 1) { this.blocks[rest[0]] = p.data; this.solved++; queue.push(rest[0]); continue; }
+        const nk = rest.join(',');
+        if (!this.pending.has(nk)) this.pending.set(nk, { idx: rest, data: p.data });
+      }
+    }
+  }
+  bytes() {
+    if (!this.done) throw new Error('fountain: incomplete');
+    const out = new Uint8Array(this.length);
+    for (let i = 0; i < this.K; i++) out.set(this.blocks[i].subarray(0, Math.min(this.chunk, this.length - i * this.chunk)), i * this.chunk);
+    return out;
+  }
+}
+
+// Parse one scanned string. TJ3 → { proto, chunk, length, seq, tag, bytes };
+// TJ2 / TJ1 → { proto, total, idx, bytes }; anything else → null.
 function qrParseFrame(raw) {
   if (typeof raw !== 'string') return null;
   try {
-    if (raw.startsWith('TJ2') && raw.length > QR_HEADER_LEN) {
+    if (raw.startsWith('TJ3') && raw.length > QR_HEADER_LEN) {
+      const chunk = parseInt(raw.slice(3, 7), 10), length = parseInt(raw.slice(7, 14), 10);
+      const seq = parseInt(raw.slice(14, 19), 10), tag = raw.slice(19, 23);
+      if (!(chunk > 0) || !(length > 0) || !(seq >= 0) || !/^[0-9A-Z $%*+\-./:]{4}$/.test(tag)) return null;
+      const bytes = b45d(raw.slice(QR_HEADER_LEN));
+      if (bytes.length !== chunk) return null;
+      return { proto: 'TJ3', chunk, length, seq, tag, bytes };
+    }
+    if (raw.startsWith('TJ2') && raw.length > 11) {
       const total = parseInt(raw.slice(3, 7), 10), idx = parseInt(raw.slice(7, 11), 10);
       if (!(total > 0) || !(idx >= 0) || idx >= total) return null;
-      return { proto: 'TJ2', total, idx, bytes: b45d(raw.slice(QR_HEADER_LEN)) };
+      return { proto: 'TJ2', total, idx, bytes: b45d(raw.slice(11)) };
     }
     if (raw.startsWith('TJ1|')) {
       const parts = raw.split('|');
@@ -6717,8 +6833,16 @@ function qrParseFrame(raw) {
 }
 // ── qr-transport:pure end ───────────────────────────────────
 
-let _qrFrames = [], _qrIdx = 0, _qrTimer = null, _qrSpeed = 700, _qrChunk = QR_CHUNK_DEFAULT, _qrBytes = null;
-let _qrRecvChunks = {}, _qrRecvTotal = 0, _qrScanTimer = null, _qrStream = null, _qrRecvProto = null;
+let _qrSeq = 0, _qrK = 0, _qrTag = '', _qrTimer = null, _qrSpeed = 700, _qrChunk = QR_CHUNK_DEFAULT, _qrBytes = null;
+let _qrScanTimer = null, _qrStream = null;
+// Receive state: one TJ3 decoder, or the index map for a TJ1/TJ2 carousel.
+let _qrRecv = null;   // { proto:'TJ3', dec } | { proto:'TJ1'|'TJ2', total, chunks:{} }
+
+// 4 base45 chars of SHA-256 — enough to tell two archives apart on a scan, no more.
+async function qrTagFor(bytes) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return b45e(h.subarray(0, 2)) + b45e(h.subarray(2, 4)).slice(0, 1);
+}
 
 // Transport benchmark readout (Chunk 2 of plan/workplan.md). Dev-only: enable
 // with localStorage['tijori.qrbench'] = '1'. Counts what the receiver actually
@@ -6734,14 +6858,14 @@ function _qrBenchReset() {
 }
 function _qrBenchStats() {
   const b = _qrBench, secs = Math.max(0.001, (performance.now() - b.t0) / 1000);
-  return { elapsed_s: +secs.toFixed(2), frames: `${b.unique}/${b.total}`, bytes: b.bytes,
+  return { elapsed_s: +secs.toFixed(2), frames: `${b.unique}/${b.decodes}`, blocks: b.total, bytes: b.bytes,
     kb_per_s: +(b.bytes / 1024 / secs).toFixed(2), decoded_fps: +(b.decodes / secs).toFixed(2),
     detect_per_s: +(b.detects / secs).toFixed(2) };
 }
 function _qrBenchPaint() {
   const el = $('qr-bench'); if (!el || !_qrBench || !_qrBench.t0) return;
   const st = _qrBenchStats();
-  el.textContent = `bench ${st.elapsed_s}s · ${st.frames} frames · ${(st.bytes / 1024).toFixed(1)} KB · ${st.kb_per_s} KB/s · ${st.decoded_fps} decoded fps · ${st.detect_per_s} detect/s`;
+  el.textContent = `bench ${st.elapsed_s}s · ${st.frames} useful/decoded · ${st.blocks} blocks · ${(st.bytes / 1024).toFixed(1)} KB · ${st.kb_per_s} KB/s · ${st.decoded_fps} decoded fps · ${st.detect_per_s} detect/s`;
 }
 
 async function showQrSend() {
@@ -6758,22 +6882,24 @@ async function showQrSend() {
   }
   const json = JSON.stringify({ format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams });
   _qrBytes = new TextEncoder().encode(json);
+  _qrTag = await qrTagFor(_qrBytes);
   _qrRebuildFrames();
 }
 
 function _qrRebuildFrames() {
   if (!_qrBytes) return;
   const sel = $('qr-chunk'); if (sel) sel.value = String(_qrChunk);
-  _qrFrames = qrBuildFrames(_qrBytes, _qrChunk);
-  _qrIdx = 0;
-  const total = _qrFrames.length;
+  _qrK = Math.ceil(_qrBytes.length / _qrChunk);
+  _qrSeq = 0;
   let ver = '';
-  try { ver = ` · v${qrcodegen.QrCode.encodeText(_qrFrames[0], qrcodegen.QrCode.Ecc.LOW).version} · EC-L`; } catch {}
-  $('qr-send-hint').textContent = `${total} frame${total > 1 ? 's' : ''} · ${(_qrBytes.length / 1024).toFixed(1)} KB${ver}`;
+  try { ver = ` · v${qrcodegen.QrCode.encodeText(_qrFrameText(0), qrcodegen.QrCode.Ecc.LOW).version} · EC-L`; } catch {}
+  $('qr-send-hint').textContent = `${_qrK} block${_qrK > 1 ? 's' : ''} · ${(_qrBytes.length / 1024).toFixed(1)} KB${ver}`;
   _renderQrFrame();
   clearInterval(_qrTimer);
-  _qrTimer = total > 1 ? setInterval(() => { _qrIdx = (_qrIdx + 1) % _qrFrames.length; _renderQrFrame(); }, _qrSpeed) : null;
+  _qrTimer = _qrK > 1 ? setInterval(() => { _qrSeq = qrFountainNextSeq(_qrSeq, _qrK); _renderQrFrame(); }, _qrSpeed) : null;
 }
+
+function _qrFrameText(seq) { return qrFountainFrame(_qrBytes, _qrChunk, _qrTag, seq); }
 
 function setQrChunk(n) {
   _qrChunk = Math.max(1, Math.min(QR_CHUNK_MAX, n | 0)) || QR_CHUNK_DEFAULT;
@@ -6782,7 +6908,7 @@ function setQrChunk(n) {
 
 function _renderQrFrame() {
   const canvas = $('qr-canvas');
-  if (!canvas || !_qrFrames.length) return;
+  if (!canvas || !_qrBytes) return;
   // Backing store follows the CSS box (min(90vw, 70vh, 640px)) × DPR so a v40
   // frame (177 modules + 4-module quiet zone) still gets whole device pixels.
   const css = Math.max(200, Math.round(canvas.getBoundingClientRect().width) || 260);
@@ -6790,7 +6916,7 @@ function _renderQrFrame() {
   if (canvas.width !== sz) canvas.width = canvas.height = sz;
   const ctx = canvas.getContext('2d');
   try {
-    const qr = qrcodegen.QrCode.encodeText(_qrFrames[_qrIdx], qrcodegen.QrCode.Ecc.LOW);
+    const qr = qrcodegen.QrCode.encodeText(_qrFrameText(_qrSeq), qrcodegen.QrCode.Ecc.LOW);
     const mod = qr.size, scale = Math.max(1, Math.floor(sz / (mod + 8))), pad = Math.floor((sz - mod * scale) / 2);
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, sz, sz);
     ctx.fillStyle = '#000000';
@@ -6802,23 +6928,23 @@ function _renderQrFrame() {
     ctx.fillStyle = '#fff'; ctx.font = `${Math.round(sz / 18)}px sans-serif`; ctx.textAlign = 'center';
     ctx.fillText('Frame too large', sz / 2, sz / 2);
   }
-  $('qr-send-counter').textContent = `Frame ${_qrIdx + 1} / ${_qrFrames.length}`;
+  $('qr-send-counter').textContent = _qrSeq < _qrK ? `Frame ${_qrSeq + 1} / ${_qrK}` : `Repair frame ${_qrSeq - _qrK + 1}`;
 }
 
 function setQrSpeed(ms) {
   _qrSpeed = ms;
   $('qr-speed-lbl').textContent = ms + 'ms';
-  if (_qrTimer) { clearInterval(_qrTimer); _qrTimer = setInterval(() => { _qrIdx = (_qrIdx + 1) % _qrFrames.length; _renderQrFrame(); }, _qrSpeed); }
+  if (_qrTimer) { clearInterval(_qrTimer); _qrTimer = setInterval(() => { _qrSeq = qrFountainNextSeq(_qrSeq, _qrK); _renderQrFrame(); }, _qrSpeed); }
 }
 
 function closeQrSend() {
   clearInterval(_qrTimer); _qrTimer = null;
-  _qrFrames = []; _qrIdx = 0; _qrBytes = null;
+  _qrBytes = null; _qrSeq = 0; _qrK = 0;
   hideModal('modal-qr-send');
 }
 
 async function startQrReceive() {
-  _qrRecvChunks = {}; _qrRecvTotal = 0; _qrRecvProto = null; _qrBenchReset();
+  _qrRecv = null; _qrBenchReset();
   const statusEl = $('qr-recv-status'), dotsEl = $('qr-frame-dots');
   if (!statusEl) return;
   if (typeof BarcodeDetector === 'undefined') {
@@ -6846,38 +6972,59 @@ async function startQrReceive() {
   }
 }
 
+function _qrDots(n) {
+  const dotsEl = $('qr-frame-dots');
+  if (dotsEl) dotsEl.innerHTML = Array.from({ length: n }, (_, i) => `<div class="qr-frame-dot" id="qrdot-${i}"></div>`).join('');
+}
+function _qrPaintDots(isGot, n) { for (let i = 0; i < n; i++) { const d = $(`qrdot-${i}`); if (d) d.classList.toggle('got', !!isGot(i)); } }
+
 function _processQrFrame(raw) {
   const f = qrParseFrame(raw);
   if (!f) return;
-  const { total, idx, bytes } = f;
-  if (_qrRecvTotal && (total !== _qrRecvTotal || f.proto !== _qrRecvProto)) return; // a different sequence started mid-scan
-  if (_qrBench) { if (!_qrBench.t0) _qrBench.t0 = performance.now(); _qrBench.decodes++; _qrBench.total = total; if (!_qrBench.chunk) _qrBench.chunk = bytes.length; }
-  if (!_qrRecvTotal) {
-    _qrRecvTotal = total; _qrRecvProto = f.proto;
-    // build dot indicators
-    const dotsEl = $('qr-frame-dots');
-    if (dotsEl) { dotsEl.innerHTML = Array.from({ length: total }, (_, i) => `<div class="qr-frame-dot" id="qrdot-${i}"></div>`).join(''); }
-  }
-  if (_qrRecvChunks[idx] !== undefined) { _qrBenchPaint(); return; }
-  _qrRecvChunks[idx] = bytes;
-  if (_qrBench) { _qrBench.unique++; _qrBench.bytes += bytes.length; _qrBenchPaint(); }
-  const dot = $(`qrdot-${idx}`); if (dot) dot.classList.add('got');
-  const got = Object.keys(_qrRecvChunks).length;
+  if (_qrBench) { if (!_qrBench.t0) _qrBench.t0 = performance.now(); _qrBench.decodes++; if (!_qrBench.chunk) _qrBench.chunk = f.bytes.length; }
   const statusEl = $('qr-recv-status');
+  if (f.proto === 'TJ3') {
+    if (_qrRecv && (_qrRecv.proto !== 'TJ3' || _qrRecv.dec.tag !== f.tag || _qrRecv.dec.length !== f.length)) return; // another sequence
+    if (!_qrRecv) { _qrRecv = { proto: 'TJ3', dec: new QrFountainDecoder(f.chunk, f.length, f.tag) }; _qrDots(_qrRecv.dec.K); if (_qrBench) _qrBench.total = _qrRecv.dec.K; }
+    const dec = _qrRecv.dec;
+    const fresh = dec.accept(f.seq, f.bytes);
+    if (_qrBench) { if (fresh) _qrBench.unique++; _qrBench.bytes = Math.min(f.length, dec.solved * f.chunk); _qrBenchPaint(); }
+    if (!fresh) return;
+    _qrPaintDots(i => dec.blocks[i], dec.K);
+    if (statusEl) statusEl.innerHTML = `Blocks: <span class="hit">${dec.solved}</span> / ${dec.K}${dec.pending.size ? ` · ${dec.pending.size} mixed` : ''}`;
+    if (dec.done) _finishQrReceive();
+    return;
+  }
+  // TJ1 / TJ2 carousel from an older sender
+  const { total, idx, bytes } = f;
+  if (_qrRecv && (_qrRecv.proto !== f.proto || _qrRecv.total !== total)) return;
+  if (!_qrRecv) { _qrRecv = { proto: f.proto, total, chunks: {} }; _qrDots(total); if (_qrBench) _qrBench.total = total; }
+  if (_qrRecv.chunks[idx] !== undefined) { _qrBenchPaint(); return; }
+  _qrRecv.chunks[idx] = bytes;
+  if (_qrBench) { _qrBench.unique++; _qrBench.bytes += bytes.length; _qrBenchPaint(); }
+  const got = Object.keys(_qrRecv.chunks).length;
+  _qrPaintDots(i => _qrRecv.chunks[i] !== undefined, total);
   if (statusEl) statusEl.innerHTML = `Frames received: <span class="hit">${got}</span> / ${total}`;
-  if (got === total) _finishQrReceive(total);
+  if (got === total) _finishQrReceive();
 }
 
-async function _finishQrReceive(total) {
+async function _finishQrReceive() {
   clearInterval(_qrScanTimer); _qrScanTimer = null;
   if (_qrStream) { _qrStream.getTracks().forEach(t => t.stop()); _qrStream = null; }
   const statusEl = $('qr-recv-status');
   if (statusEl) statusEl.textContent = 'Decoding vault…';
-  if (_qrBench && _qrBench.t0) { _qrBenchPaint(); console.log('Tijori QR bench: ' + JSON.stringify({ transport: _qrRecvProto, chunk: _qrBench.chunk, ..._qrBenchStats() })); }
+  const r = _qrRecv;
+  if (_qrBench && _qrBench.t0) { _qrBenchPaint(); console.log('Tijori QR bench: ' + JSON.stringify({ transport: r.proto, chunk: _qrBench.chunk, ..._qrBenchStats() })); }
   try {
-    const parts = Array.from({ length: total }, (_, i) => _qrRecvChunks[i]);
-    const bytes = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-    let o = 0; for (const p of parts) { bytes.set(p, o); o += p.length; }
+    let bytes;
+    if (r.proto === 'TJ3') {
+      bytes = r.dec.bytes();
+      if (await qrTagFor(bytes) !== r.dec.tag) throw new Error('archive checksum mismatch');
+    } else {
+      const parts = Array.from({ length: r.total }, (_, i) => r.chunks[i]);
+      bytes = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      let o = 0; for (const p of parts) { bytes.set(p, o); o += p.length; }
+    }
     const json = new TextDecoder().decode(bytes);
     await importArchive(json);
     renderEntryList(); renderTopbar();
@@ -6885,7 +7032,7 @@ async function _finishQrReceive(total) {
     toast('Vault received via QR.');
   } catch (e) {
     if (statusEl) statusEl.textContent = '⚠ Decode failed — try again. ' + e.message;
-    _qrRecvChunks = {}; _qrRecvTotal = 0;
+    _qrRecv = null;
   }
 }
 
