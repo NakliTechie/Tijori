@@ -119,7 +119,7 @@ Your vault is yours. Three ways to leave Tijori without losing data:
 | TOTP | RFC 6238 — WebCrypto `HMAC-SHA-{1,256,512}`, base32 inline (~25 lines) |
 | Storage | Standalone: `FileSystemDirectoryHandle` on desktop, OPFS fallback on iOS/mobile. Hosted: app-scoped `naklios.fs` over a user-selected NakliOS Folder or encrypted Crate backend. |
 | Reconnect | FSA handle persisted in IndexedDB (permission re-requested on next visit); OPFS vault name persisted (reconnects silently) |
-| QR flash | Archive chunked into `TJ1|total|index|b64` frames, Nayuki qrcodegen inlined, receiver via `BarcodeDetector` API. Out-of-order and duplicate frames are fine; receiver waits for all indices. |
+| QR flash | Archive chunked into `TJ2` frames — `TJ2` + 4-digit total + 4-digit index + base45 payload (RFC 9285), so every frame is a single QR alphanumeric segment at EC-L. Frame size is selectable on the sender (450 B → 2.85 KB / v40). Nayuki qrcodegen inlined, receiver via `BarcodeDetector`; older `TJ1|total|index|b64` senders are still accepted. Out-of-order and duplicate frames are fine; receiver waits for all indices. |
 | Dependencies | **Zero** |
 | Build step | **None** |
 
@@ -167,7 +167,7 @@ Each device writes only its own `.jsonl` file. Sync is whatever moves files betw
 
 ### Air-gapped sync — QR flash
 
-The transport worth calling out: **Settings → Data → Send vault via QR**. Tijori builds the full encrypted archive in memory, chunks it into `TJ1|total|index|b64` frames, and loops an animated QR animation on screen. On the receiving device (Import → QR sequence), the camera picks up frames with `BarcodeDetector`, and a grid of dots fills in as each chunk arrives. Out-of-order and duplicate frames are normal — the receiver waits for all indices, reassembles, decrypts, and merges.
+The transport worth calling out: **Settings → Data → Send vault via QR**. Tijori builds the full encrypted archive in memory, chunks it into base45 `TJ2` frames (pick the frame size on the sender — bigger moves more per flash, smaller is easier for a shaky camera), and loops an animated QR on screen. On the receiving device (Import → QR sequence), the camera picks up frames with `BarcodeDetector`, and a grid of dots fills in as each chunk arrives. Out-of-order and duplicate frames are normal — the receiver waits for all indices, reassembles, decrypts, and merges.
 
 Use it for:
 
