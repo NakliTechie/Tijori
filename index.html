@@ -1507,7 +1507,7 @@ textarea { resize: vertical; min-height: 80px; }
       <p>You can keep more than one vault — personal / work / family. The welcome screen lists all vaults Tijori knows about. Use the <strong>⋯</strong> menu next to a row to rename it, set it as the default (opens automatically on launch), or forget it (removes from the list without touching the files on disk).</p>
       <p>Click <strong>Open vault</strong> to add an existing vault from another folder; it'll be added to the list automatically.</p>
       <h4>Attachments</h4>
-      <p>Open a saved entry and use <strong>+ Add file</strong> to attach recovery-code sheets, scanned IDs, SSH keys, seed cards — anything up to 50 MB (10 MB and above asks first). Each file is encrypted with its own key derived from the vault's master secret and stored as an opaque file under <code>tijori-attachments/</code>; the name, type and size live only in the encrypted event log. Files follow the vault through folder sync, the LAN transport and <code>.tijori</code> archives. The QR sequence carries the entry but never the file — it shows as <em>not on this device</em> until a file-carrying sync runs. Removing an attachment records a tombstone; the encrypted bytes stay until <em>Settings → Vault → Garbage-collect attachments</em>, which only ever deletes files whose record is removed or whose entry is deleted. Needs a v2 vault.</p>
+      <p>Open a saved entry and use <strong>+ Add file</strong> to attach recovery-code sheets, scanned IDs, SSH keys, seed cards — anything up to 50 MB (10 MB and above asks first). Each file is encrypted with its own key derived from the vault's master secret and stored as an opaque file under <code>tijori-attachments/</code>; the name, type and size live only in the encrypted event log. Files follow the vault through folder sync, the LAN transport and <code>.tijori</code> archives. The QR sequence carries the entry and any file up to 64 KB; larger files show as <em>not on this device</em> until a file-carrying sync runs. Removing an attachment records a tombstone; the encrypted bytes stay until <em>Settings → Vault → Garbage-collect attachments</em>, which only ever deletes files whose record is removed or whose entry is deleted. Needs a v2 vault.</p>
       <h4>Vault audit</h4>
       <p><em>Settings → Vault → Run vault audit</em> checks for reused or weak passwords, missing 2FA, aging entries, and other hygiene issues. Everything is computed in memory and never sent anywhere — there is no breach-check service.</p>
       <h4>Keyboard shortcuts</h4>
@@ -1519,7 +1519,7 @@ textarea { resize: vertical; min-height: 80px; }
     </div>
     <div id="help-security" class="help-body tab-pane">
       <h4>Attachments</h4>
-      <p>An attached file gets its own AES-256-GCM key, derived from the vault's master secret and the attachment's random id, with the id bound into the ciphertext — the same secret that protects every entry, so a hardware-key or password change covers files too. On disk the file is an opaque <code>.bin</code> under <code>tijori-attachments/</code>; its name, type and size exist only inside the encrypted event log, and the log records the ciphertext's SHA-256 so a swapped or truncated file is refused. A file is decrypted only when you download or preview it, in memory, and the plaintext is dropped when the preview closes or the vault locks. Files inherit the sync model unchanged: they ride folder sync, the LAN transport and archives; they never ride QR.</p>
+      <p>An attached file gets its own AES-256-GCM key, derived from the vault's master secret and the attachment's random id, with the id bound into the ciphertext — the same secret that protects every entry, so a hardware-key or password change covers files too. On disk the file is an opaque <code>.bin</code> under <code>tijori-attachments/</code>; its name, type and size exist only inside the encrypted event log, and the log records the ciphertext's SHA-256 so a swapped or truncated file is refused. A file is decrypted only when you download or preview it, in memory, and the plaintext is dropped when the preview closes or the vault locks. Files inherit the sync model unchanged: they ride folder sync, the LAN transport and archives; over QR only files up to 64 KB travel, and the sender says what it left behind.</p>
       <h4>Hardware keys</h4>
       <p>Tijori can use any FIDO2 / WebAuthn authenticator as a second factor: YubiKeys, Touch ID, Windows Hello, iCloud passkeys, Android passkeys.</p>
       <p>Both the master password <strong>and</strong> the hardware key are required to unlock — losing either alone keeps the vault safe; losing both is the only way in.</p>
@@ -7625,6 +7625,7 @@ self.onmessage = async (e) => {
 
 let _qrSeq = 0, _qrK = 0, _qrTag = '', _qrTimer = null, _qrSpeed = 700, _qrChunk = QR_CHUNK_DEFAULT, _qrBytes = null;
 let _qrNext = null;   // { seq, qr } — the next frame, encoded right after the current one paints
+let _qrAttNote = '';  // what the QR archive did and did not carry, for the send hint
 let _qrGen = 0;       // bumps on every start/stop; a loop whose generation is stale exits
 let _qrScanGen = 0, _qrStream = null, _qrWorker = null, _qrDetectBusy = false;
 
@@ -7673,16 +7674,23 @@ async function showQrSend() {
   showModal('modal-qr-send');
   $('qr-send-counter').textContent = 'Building…';
   $('qr-send-hint').textContent = '';
-  _qrBytes = await buildArchiveBytes();
+  const built = await buildArchive({ withAttachments: true, maxBlob: QR_ATT_MAX });
+  _qrBytes = built.bytes;
+  _qrAttNote = built.included.count || built.withheld.count
+    ? ` · ${built.included.count ? `${built.included.count} file${built.included.count > 1 ? 's' : ''} (${attFmtSize(built.included.bytes)}) included` : ''}${built.included.count && built.withheld.count ? ' · ' : ''}${built.withheld.count ? `${built.withheld.count} file${built.withheld.count > 1 ? 's' : ''} (${attFmtSize(built.withheld.bytes)}) over ${attFmtSize(QR_ATT_MAX)} withheld — use LAN or the vault folder` : ''}`
+    : '';
   _qrTag = await qrTagFor(_qrBytes);
   _qrRebuildFrames();
 }
 
 // The encrypted archive a transport sends: meta + every event stream, verbatim,
-// plus attachment blobs when the transport can carry them (LAN yes, QR no —
-// a QR-synced entry shows its files as "not on this device" until a
-// blob-carrying transport runs).
-async function buildArchiveBytes({ withAttachments = false } = {}) {
+// plus the attachment blobs the transport can carry. LAN carries all of them;
+// QR carries only blobs up to QR_ATT_MAX (base64 inside the JSON, so ~1.33×
+// on the wire) and withholds the rest — those entries show their files as
+// "not on this device" until a blob-carrying transport runs. Returns
+// { bytes, included, withheld } so the sender can say what stayed behind.
+const QR_ATT_MAX = 64 * 1024;   // ciphertext bytes per blob; tune on the phone rows in plan/qr-benchmarks.md
+async function buildArchive({ withAttachments = false, maxBlob = Infinity } = {}) {
   const streamNames = await getAllStreamNames(S.dirHandle);
   const streams = {};
   for (const name of streamNames) {
@@ -7690,12 +7698,17 @@ async function buildArchiveBytes({ withAttachments = false } = {}) {
     streams[deviceId] = (await readStream(S.dirHandle, deviceId)).join('\n');
   }
   const archive = { format: 'tijori-archive-v1', created_at: nowISO(), meta: S.meta, streams };
+  const included = { count: 0, bytes: 0 }, withheld = { count: 0, bytes: 0 };
   if (withAttachments) {
     const blobs = await collectAttachmentBlobs();
-    if (Object.keys(blobs).length) { archive.attachments = {}; for (const [id, b] of Object.entries(blobs)) archive.attachments[id] = b64e(b); }
+    for (const [id, b] of Object.entries(blobs)) {
+      if (b.length > maxBlob) { withheld.count++; withheld.bytes += b.length; continue; }
+      (archive.attachments ??= {})[id] = b64e(b); included.count++; included.bytes += b.length;
+    }
   }
-  return new TextEncoder().encode(JSON.stringify(archive));
+  return { bytes: new TextEncoder().encode(JSON.stringify(archive)), included, withheld };
 }
+async function buildArchiveBytes(opts) { return (await buildArchive(opts)).bytes; }
 
 function _qrRebuildFrames() {
   if (!_qrBytes) return;
@@ -7704,7 +7717,7 @@ function _qrRebuildFrames() {
   _qrSeq = 0;
   let ver = '';
   try { ver = ` · v${qrcodegen.QrCode.encodeText(_qrFrameText(0), qrcodegen.QrCode.Ecc.LOW).version} · EC-L`; } catch {}
-  $('qr-send-hint').textContent = `${_qrK} block${_qrK > 1 ? 's' : ''} · ${(_qrBytes.length / 1024).toFixed(1)} KB${ver}`;
+  $('qr-send-hint').textContent = `${_qrK} block${_qrK > 1 ? 's' : ''} · ${(_qrBytes.length / 1024).toFixed(1)} KB${ver}${_qrAttNote}`;
   _qrNext = null;
   _renderQrFrame();
   _qrStartTicker();
@@ -8061,7 +8074,7 @@ async function renderAttachments(entryId) {
       <span>📎</span>
       <span class="att-name" title="${escHtml(a.filename)}">${escHtml(a.filename)}</span>
       <span class="att-size">${attFmtSize(a.size)}</span>
-      ${present[i] ? `${attPreviewKind(a) ? `<button class="btn-icon" type="button" title="Preview" onclick="previewAttachment('${a.attachment_id}')">👁</button>` : ''}<button class="btn-icon" type="button" title="Download" onclick="downloadAttachment('${a.attachment_id}')">⤓</button>` : `<span class="att-pending" title="The encrypted file has not reached this device. LAN, the vault folder, or an archive will bring it; QR never carries files.">not on this device</span>`}
+      ${present[i] ? `${attPreviewKind(a) ? `<button class="btn-icon" type="button" title="Preview" onclick="previewAttachment('${a.attachment_id}')">👁</button>` : ''}<button class="btn-icon" type="button" title="Download" onclick="downloadAttachment('${a.attachment_id}')">⤓</button>` : `<span class="att-pending" title="The encrypted file has not reached this device. LAN, the vault folder, or an archive will bring it; the QR sequence carries only small files.">not on this device</span>`}
       <button class="btn-icon" type="button" title="Remove" onclick="removeAttachment('${a.attachment_id}')">×</button>
     </div>`).join('');
 }
@@ -8292,7 +8305,7 @@ async function showLanSend() {
   if (typeof RTCPeerConnection === 'undefined') { _lanStatus('lan-send-status', 'This browser has no WebRTC. Use the QR sequence.'); return; }
   const L = _lan = { gen: (Math.random() * 1e9) | 0 };
   try {
-    L.bytes = await buildArchiveBytes({ withAttachments: true });
+    L.bytes = await buildArchiveBytes({ withAttachments: true });   // every blob; LAN is the transport built for them
     L.code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
     L.pc = lanNewPc();
     L.dc = L.pc.createDataChannel('tijori', { ordered: true });
