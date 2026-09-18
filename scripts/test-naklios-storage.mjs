@@ -108,4 +108,32 @@ assert.equal(request.path, 'vault.json');
 fromHost({ type: 'naklios:fs:reply', requestId: request.requestId, result: null });
 await writePromise;
 
+// ── attachment bytes IO on the hosted backend: sub-paths pass through verbatim,
+// binary is binary, missing reads are null, existence and delete route to the host ──
+{
+  const slice = (from, to) => { const a = app.indexOf(from), b = app.indexOf(to, a); assert.ok(a > 0 && b > a, `region ${from}`); return app.slice(a, b); };
+  const io = slice('async function _subDir(', 'async function attKey(');
+  const isDir = slice('function isNakliOSDir(', 'function storageDisplayName(');
+  const calls = []; const store = new Map();
+  const naklios = { fs: {
+    readBinary: async p => { calls.push(['readBinary', p]); if (!store.has(p)) throw new Error('not found: ' + p); return store.get(p); },
+    write: async (p, d) => { calls.push(['write', p, d instanceof Uint8Array ? 'Uint8Array' : typeof d]); store.set(p, d); },
+    exists: async p => { calls.push(['exists', p]); return store.has(p); },
+    delete: async p => { calls.push(['delete', p]); store.delete(p); },
+  } };
+  const t = new Function('naklios', isDir + io + ';return { readFileBytes, writeFileBytes, fileExists, deleteFile };')(naklios);
+  const dir = { __nakliosFs: true };
+  const path = 'tijori-attachments/' + 'ab'.repeat(16) + '.bin';
+  assert.equal(await t.readFileBytes(dir, path), null, 'a missing blob reads as null, not a throw');
+  const bytes = new Uint8Array([0, 1, 2, 255, 254]);
+  await t.writeFileBytes(dir, path, bytes);
+  assert.deepEqual(calls.at(-1), ['write', path, 'Uint8Array'], 'the host receives the sub-path and raw bytes');
+  assert.equal(await t.fileExists(dir, path), true);
+  assert.deepEqual([...await t.readFileBytes(dir, path)], [...bytes]);
+  await t.deleteFile(dir, path);
+  assert.equal(await t.fileExists(dir, path), false);
+  assert.ok(calls.every(c => c[1] === path), 'no path is rewritten on the way to the host');
+  console.log('Tijori NakliOS attachment bytes IO: PASS');
+}
+
 console.log('Tijori NakliOS storage contract: PASS');

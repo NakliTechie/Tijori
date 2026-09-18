@@ -12,6 +12,7 @@
   worker-src blob:;
   style-src 'unsafe-inline';
   img-src data: blob:;
+  frame-src blob:;
   connect-src 'none';
   base-uri 'none';
   form-action 'none';
@@ -565,6 +566,10 @@ textarea { resize: vertical; min-height: 80px; }
 .camera-corner.br { bottom:10px; right:10px; border-bottom-width:3px; border-right-width:3px; border-radius:0 0 4px 0; }
 .qr-recv-status { font-size:13px; color:var(--muted); text-align:center; margin-top:10px; min-height:20px; }
 .qr-recv-status .hit { color:var(--ok); font-weight:700; }
+.att-preview { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; min-height:120px; max-height:65vh; overflow:auto; display:flex; align-items:center; justify-content:center; }
+.att-preview pre { margin:0; padding:12px; font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word; width:100%; align-self:flex-start; }
+.att-preview img { max-width:100%; max-height:65vh; display:block; }
+.att-preview iframe { width:100%; height:65vh; border:0; background:#fff; }
 .att-section { margin-top:4px; }
 .entry-att { font-size:11px; color:var(--muted); margin-left:4px; }
 .att-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
@@ -1236,6 +1241,20 @@ textarea { resize: vertical; min-height: 80px; }
   </div>
 </div>
 
+<!-- ══════════════ MODAL: ATTACHMENT PREVIEW ══════════════ -->
+<div id="modal-att-preview" class="modal-bg">
+  <div class="modal modal-wide">
+    <h3 id="att-preview-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Attachment</h3>
+    <div id="att-preview-body" class="att-preview"></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px" id="att-preview-meta"></div>
+    <hr class="sep">
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn secondary btn-sm" id="att-preview-dl" onclick="">Download</button>
+      <button class="btn ghost btn-sm" onclick="closeAttachmentPreview()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ MODAL: LAN SEND ══════════════ -->
 <div id="modal-lan-send" class="modal-bg">
   <div class="modal">
@@ -1499,6 +1518,8 @@ textarea { resize: vertical; min-height: 80px; }
       </ul>
     </div>
     <div id="help-security" class="help-body tab-pane">
+      <h4>Attachments</h4>
+      <p>An attached file gets its own AES-256-GCM key, derived from the vault's master secret and the attachment's random id, with the id bound into the ciphertext — the same secret that protects every entry, so a hardware-key or password change covers files too. On disk the file is an opaque <code>.bin</code> under <code>tijori-attachments/</code>; its name, type and size exist only inside the encrypted event log, and the log records the ciphertext's SHA-256 so a swapped or truncated file is refused. A file is decrypted only when you download or preview it, in memory, and the plaintext is dropped when the preview closes or the vault locks. Files inherit the sync model unchanged: they ride folder sync, the LAN transport and archives; they never ride QR.</p>
       <h4>Hardware keys</h4>
       <p>Tijori can use any FIDO2 / WebAuthn authenticator as a second factor: YubiKeys, Touch ID, Windows Hello, iCloud passkeys, Android passkeys.</p>
       <p>Both the master password <strong>and</strong> the hardware key are required to unlock — losing either alone keeps the vault safe; losing both is the only way in.</p>
@@ -4015,6 +4036,7 @@ function hideModal(id) {
 function hideAllModals() {
   document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('active'));
   stopEntryQrScan?.();
+  if (typeof closeAttachmentPreview === 'function') { try { closeAttachmentPreview(); } catch {} }
 }
 
 function toast(msg, { error = false, dur = 2500 } = {}) {
@@ -4884,9 +4906,10 @@ async function exportPlainJson() {
 // and most others. TOTP secret exported as otpauth:// URI in the login_totp
 // column per Bitwarden convention. Cards/Notes flattened into `notes`.
 async function confirmCsvExport() {
+  const nAtt = [...S.entries.values()].reduce((n, e) => n + (e.attachments?.size || 0), 0);
   const ok = await confirmDialog(
     'Export vault as CSV?',
-    'CSV is plaintext. Anyone with access to the file can read every password. Cards and Notes are flattened into the Notes column (lossy). Use the encrypted archive or KeePass .kdbx for anything you\'ll store long-term.',
+    (nAtt ? `${nAtt} attachment${nAtt > 1 ? 's' : ''} will NOT be included — CSV cannot carry files. ` : '') + 'CSV is plaintext. Anyone with access to the file can read every password. Cards and Notes are flattened into the Notes column (lossy). Use the encrypted archive or KeePass .kdbx for anything you\'ll store long-term.',
     'Export CSV', true
   );
   if (ok) await exportCsv();
@@ -5008,12 +5031,13 @@ async function exportToKdbx() {
     const gNotes  = db.createGroup(root, 'Notes');
     const gCodes  = db.createGroup(root, 'Codes');
 
-    let n = 0;
+    let n = 0, nBin = 0, nPending = 0;
     for (const e of S.entries.values()) {
       if (e.deleted) continue;
       n++;
+      let x = null;
       if (e.type === 'login') {
-        const x = db.createEntry(gLogins);
+        x = db.createEntry(gLogins);
         x.fields.set('Title',    entryTitle(e));
         x.fields.set('UserName', fv(e, 'username'));
         x.fields.set('Password', ProtectedValue.fromString(fv(e, 'password')));
@@ -5021,7 +5045,7 @@ async function exportToKdbx() {
         x.fields.set('Notes',    fv(e, 'notes'));
         if (e.pinned) x.fields.set('tijori_pinned', 'true');
       } else if (e.type === 'card') {
-        const x = db.createEntry(gCards);
+        x = db.createEntry(gCards);
         x.fields.set('Title',    entryTitle(e) || '[Card]');
         x.fields.set('UserName', fv(e, 'cardholder'));
         x.fields.set('Password', ProtectedValue.fromString(fv(e, 'cvv')));
@@ -5030,12 +5054,12 @@ async function exportToKdbx() {
         x.fields.set('card_expiry', fv(e, 'expiry'));
         if (e.pinned) x.fields.set('tijori_pinned', 'true');
       } else if (e.type === 'note') {
-        const x = db.createEntry(gNotes);
+        x = db.createEntry(gNotes);
         x.fields.set('Title', entryTitle(e));
         x.fields.set('Notes', fv(e, 'body'));
         if (e.pinned) x.fields.set('tijori_pinned', 'true');
       } else if (e.type === 'code') {
-        const x = db.createEntry(gCodes);
+        x = db.createEntry(gCodes);
         const issuer = fv(e, 'issuer');
         const account = fv(e, 'account') || fv(e, 'label') || '';
         x.fields.set('Title',    issuer || fv(e, 'label') || 'TOTP');
@@ -5052,12 +5076,25 @@ async function exportToKdbx() {
         x.fields.set('otp', ProtectedValue.fromString(`otpauth://totp/${label}?${params}`));
         if (e.pinned) x.fields.set('tijori_pinned', 'true');
       }
+      // Attachments present on this device go in as KDBX binaries (decrypted —
+      // the .kdbx is protected by its own password); pending ones are counted.
+      if (x && e.attachments?.size) {
+        for (const a of e.attachments.values()) {
+          try {
+            const enc = await readFileBytes(S.dirHandle, attPath(a.attachment_id));
+            if (!enc) { nPending++; continue; }
+            const plain = await attDecrypt(a.attachment_id, enc);
+            x.binaries.set(a.filename || a.attachment_id, await db.createBinary(plain));
+            nBin++;
+          } catch { nPending++; }
+        }
+      }
     }
 
     const bytes = await db.save();
     const blob = new Blob([bytes], { type: 'application/octet-stream' });
     downloadBlob(blob, `${vaultName}-export-${_exportTimestamp()}.kdbx`);
-    toast(`Exported ${n} ${n === 1 ? 'entry' : 'entries'} to KeePass.`);
+    toast(`Exported ${n} ${n === 1 ? 'entry' : 'entries'}${nBin ? ` and ${nBin} attachment${nBin > 1 ? 's' : ''}` : ''} to KeePass.${nPending ? ` ${nPending} attachment${nPending > 1 ? 's' : ''} not on this device ${nPending > 1 ? 'were' : 'was'} skipped.` : ''}`);
   } catch (err) {
     toast('KeePass export failed: ' + (err?.message || err), { error: true });
   }
@@ -8024,9 +8061,51 @@ async function renderAttachments(entryId) {
       <span>📎</span>
       <span class="att-name" title="${escHtml(a.filename)}">${escHtml(a.filename)}</span>
       <span class="att-size">${attFmtSize(a.size)}</span>
-      ${present[i] ? `<button class="btn-icon" type="button" title="Download" onclick="downloadAttachment('${a.attachment_id}')">⤓</button>` : `<span class="att-pending" title="The encrypted file has not reached this device. LAN, the vault folder, or an archive will bring it; QR never carries files.">not on this device</span>`}
+      ${present[i] ? `${attPreviewKind(a) ? `<button class="btn-icon" type="button" title="Preview" onclick="previewAttachment('${a.attachment_id}')">👁</button>` : ''}<button class="btn-icon" type="button" title="Download" onclick="downloadAttachment('${a.attachment_id}')">⤓</button>` : `<span class="att-pending" title="The encrypted file has not reached this device. LAN, the vault folder, or an archive will bring it; QR never carries files.">not on this device</span>`}
       <button class="btn-icon" type="button" title="Remove" onclick="removeAttachment('${a.attachment_id}')">×</button>
     </div>`).join('');
+}
+
+// Preview: text / image / PDF, decrypted into memory for the life of the
+// modal only. The object URL is revoked and the buffer zeroed on close and on
+// lock. Anything else is download-only.
+const ATT_TEXT_MAX = 1024 * 1024;
+function attPreviewKind(a) {
+  const m = (a.mime || '').toLowerCase(), n = (a.filename || '').toLowerCase();
+  if (m.startsWith('image/') && !m.includes('svg')) return 'image';
+  if (m === 'application/pdf' || n.endsWith('.pdf')) return 'pdf';
+  if (m.startsWith('text/') || ['application/json', 'application/x-yaml', 'application/xml'].includes(m) || /\.(txt|md|csv|json|yaml|yml|log|pem|pub|sh|env|ini|conf)$/.test(n)) return a.size <= ATT_TEXT_MAX ? 'text' : null;
+  return null;
+}
+let _attPreview = null;   // { url, plain }
+async function previewAttachment(attachment_id) {
+  const a = S.attachments?.get(attachment_id); if (!a) return;
+  const kind = attPreviewKind(a); if (!kind) { downloadAttachment(attachment_id); return; }
+  try {
+    const bytes = await readFileBytes(S.dirHandle, attPath(attachment_id));
+    if (!bytes) { toast('That file is not on this device yet.', { error: true }); return; }
+    if (await attSha256Hex(bytes) !== a.sha256_ct) { toast('Attachment file does not match its record — refusing to open it.', { error: true }); return; }
+    closeAttachmentPreview();
+    const plain = await attDecrypt(attachment_id, bytes);
+    const body = $('att-preview-body'); body.replaceChildren();
+    $('att-preview-title').textContent = a.filename;
+    $('att-preview-meta').textContent = `${attFmtSize(a.size)} · ${a.mime || 'unknown type'} · decrypted in memory only`;
+    $('att-preview-dl').onclick = () => downloadAttachment(attachment_id);
+    _attPreview = { plain, url: null };
+    if (kind === 'text') { const pre = document.createElement('pre'); pre.textContent = new TextDecoder().decode(plain); body.appendChild(pre); }
+    else {
+      _attPreview.url = URL.createObjectURL(new Blob([plain], { type: kind === 'pdf' ? 'application/pdf' : (a.mime || 'image/*') }));
+      const el = document.createElement(kind === 'pdf' ? 'iframe' : 'img');
+      if (kind === 'pdf') el.setAttribute('sandbox', ''); else el.alt = a.filename;
+      el.src = _attPreview.url; body.appendChild(el);
+    }
+    showModal('modal-att-preview');
+  } catch (e) { toast('Could not open attachment: ' + e.message, { error: true }); }
+}
+function closeAttachmentPreview() {
+  if (_attPreview) { if (_attPreview.url) URL.revokeObjectURL(_attPreview.url); try { _attPreview.plain.fill(0); } catch {} _attPreview = null; }
+  const body = $('att-preview-body'); if (body) body.replaceChildren();
+  hideModal('modal-att-preview');
 }
 
 // Settings → Vault → Garbage-collect: delete blobs whose record is tombstoned
