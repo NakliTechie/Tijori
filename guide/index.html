@@ -168,6 +168,7 @@ td:last-child { color: var(--muted); }
       <a href="../" class="primary">&larr; Back to app</a>
       <a href="https://github.com/NakliTechie/Tijori" target="_blank" rel="noopener">Source</a>
       <a href="../README.md" target="_blank" rel="noopener">README</a>
+      <a href="../ARCHITECTURE.md" target="_blank" rel="noopener">Architecture</a>
     </div>
   </div>
 
@@ -181,7 +182,8 @@ td:last-child { color: var(--muted); }
       encrypted Crate backend.
     </p>
     <p>
-      This page shows every screen of the app, explains how it's built, and is honest about the
+      This page shows every screen of the app — entries, hardware keys, attachments, and the two
+      server-free ways to sync — explains how it's built, and is honest about the
       tradeoffs. Asking you to trust a browser app with your passwords is a big ask — here's
       everything you need to make that decision.
     </p>
@@ -431,6 +433,68 @@ td:last-child { color: var(--muted); }
         </div>
       </div>
 
+      <div class="step">
+        <div class="phone-wrap">
+          <div class="phone">
+            <img src="screenshots/09-attachments.svg" alt="Tijori edit-entry modal — attachments section with three files, one marked not on this device">
+          </div>
+        </div>
+        <div>
+          <span class="num">09 / ATTACHMENTS</span>
+          <h4>Files on entries: recovery sheets, scanned IDs, keys.</h4>
+          <p>
+            Open a saved entry and <strong>+ Add file</strong>. Each file gets its own
+            AES-256-GCM key, derived from the vault's master secret and the file's random id, and is
+            stored as an opaque <code>.bin</code> under <code>tijori-attachments/</code>. Its name,
+            type and size exist only inside the encrypted event log. Up to 50 MB (10 MB and above asks first).
+          </p>
+          <p>
+            <strong>Preview</strong> (text, images, PDF) decrypts into memory for as long as the
+            preview is open — closing it or locking the vault drops the plaintext.
+            <strong>Download</strong> writes the decrypted file where you choose.
+          </p>
+          <p>
+            <strong>"Not on this device"</strong> is a normal state, not an error: the entry arrived by
+            QR (which carries only files up to 64 KB) and the file will follow the next time folder
+            sync, the LAN transport or an archive runs. Removing a file records a tombstone; the
+            encrypted bytes stay until you run <em>Settings &rarr; Vault &rarr; Garbage-collect
+            attachments</em>, which only ever deletes files whose record is removed or whose entry is deleted.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="phone-wrap">
+          <div class="phone">
+            <img src="screenshots/10-lan.svg" alt="Tijori LAN send modal — a static QR, a pairing code, a camera area for the reply, and a local-only transfer progress bar">
+          </div>
+        </div>
+        <div>
+          <span class="num">10 / SYNC WITHOUT A SERVER</span>
+          <h4>Two devices, two screens, nothing in between.</h4>
+          <p>
+            <strong>QR flash</strong> (Settings &rarr; Data &rarr; Send vault via QR) streams the encrypted
+            archive as fountain-coded QR frames: the blocks once in order, then endless repair frames that
+            each mix a few blocks. The receiver (Import &rarr; QR sequence) can start at any point and never
+            waits for a loop — a missed frame costs one more frame. Pick a frame size on the sender:
+            bigger moves more per flash, smaller suits a shaky camera. Works in airplane mode.
+          </p>
+          <p>
+            <strong>LAN / hotspot</strong> (Settings &rarr; Data &rarr; Send vault over LAN) is the fast path and
+            the one that carries attachments. One static QR each way exchanges the handshake — the code
+            shown on the sender is checked before a byte moves — then the archive travels over a direct
+            WebRTC channel. There is no STUN, TURN, relay or signaling server; only device-to-device
+            addresses are used, and after connecting Tijori checks the live path and refuses anything else.
+            If the devices cannot reach each other it says so and points you back to QR. A phone hotspot
+            counts as your own network.
+          </p>
+          <p>
+            Either way the receiver merges what it gets: an empty vault receives everything, an existing
+            one only what it is missing.
+          </p>
+        </div>
+      </div>
+
     </div>
   </section>
 
@@ -450,7 +514,10 @@ td:last-child { color: var(--muted); }
           <tr><td>File I/O</td><td>Standalone: File System Access API (<code>showDirectoryPicker</code>) with an OPFS fallback. Hosted: app-scoped <code>naklios.fs</code> over the Folder or Crate backend the user grants.</td></tr>
           <tr><td>Network requests</td><td>Tijori itself makes zero after page load; CSP has <code>connect-src 'none'</code>. In hosted Crate mode, NakliOS performs storage transport outside the Tijori iframe.</td></tr>
           <tr><td>Hardware-key binding</td><td>WebAuthn PRF extension. Multiple keys per vault. <code>master_secret</code> wrapped per key — never re-encrypts vault data, only the wrap blobs change.</td></tr>
-          <tr><td>Dependencies</td><td>Zero. No CDN, no npm, no framework.</td></tr>
+          <tr><td>Attachments</td><td>One opaque file per attachment, AES-256-GCM under a per-file key derived from <code>master_secret</code>; the file's id is bound into the ciphertext and its SHA-256 is recorded in the event that names it. Missing file = pending state, never an error.</td></tr>
+          <tr><td>QR flash</td><td>Systematic LT fountain code over the archive, base45 payload so every frame is one QR alphanumeric segment at EC-L, up to v40. Nayuki qrcodegen inlined; decoded off the main thread via <code>BarcodeDetector</code>. Carries files up to 64 KB.</td></tr>
+          <tr><td>LAN / hotspot</td><td>WebRTC DataChannel with no ICE servers — host candidates only, no STUN / TURN / relay / signaling. Offer and answer each ride one static QR; the DTLS fingerprint in it authenticates the peer, a 6-digit code is HMAC-checked over both fingerprints. Refuses any path that is not host↔host.</td></tr>
+          <tr><td>Dependencies</td><td>Zero at runtime. No CDN, no npm, no framework. (<code>jsqr</code> is a dev-only dependency: CI decodes rendered QR frames with an independent reader.)</td></tr>
           <tr><td>Build step</td><td>None. The source file is the app.</td></tr>
         </tbody>
       </table>
@@ -602,6 +669,10 @@ td:last-child { color: var(--muted); }
       <div class="card">
         <h3>Back up the folder as a zip</h3>
         <p>Restoring rewinds you to that point in time. Pair with the encrypted archive export (Settings &rarr; Data) for offsite backups.</p>
+      </div>
+      <div class="card">
+        <h3>Sync <code>tijori-attachments/</code> with the logs, or not</h3>
+        <p>A file that arrives before or after the event naming it is fine either way: the entry shows it as "not on this device" until the bytes land, and garbage collection never touches a file nobody references yet.</p>
       </div>
     </div>
 
